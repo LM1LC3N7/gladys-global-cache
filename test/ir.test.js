@@ -5,8 +5,9 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import net from 'node:net';
 import { startFakeGc } from './helpers/fakeGc.js';
-import { D, createAll, setup, within } from './helpers/app.js';
+import { D, DEAD_PORT, createAll, setup, until, within } from './helpers/app.js';
 
 const CODE = '38000,1,1,342,171,21,21,21,64,21,1520';
 
@@ -102,8 +103,12 @@ test('GC-100: under 20 kHz refused before sending; the button of the Configurati
 
 test('an unreachable gateway: nothing sent; the other gateways are not held', async (t) => {
   const fakes = [await startFakeGc('IP2IR'), await startFakeGc('IP2IR')];
-  const s = await ready(t, { fakes });
-  await fakes[0].close();
+  // The first gateway goes away: its connections reach a port that refuses.
+  let gone = false;
+  const connect = (options) =>
+    net.connect(gone && options.port === fakes[0].port ? { ...options, port: DEAD_PORT } : options);
+  const s = await ready(t, { fakes, connect });
+  gone = true;
   const pending = scene(s, { connector: '1:1', code: CODE }, fakes[0]);
   const other = await scene(s, { connector: '1:1', code: CODE }, fakes[1]);
   assert.equal(other.success, true, other.error);
@@ -125,4 +130,27 @@ test('a scene on 5 slow gateways (4 answers of 150 ms each): all 5 sent', async 
     acks.every((a) => a.success && a.data.outputs.confirmed),
     JSON.stringify(acks),
   );
+});
+
+test('another model at the address: no code sent; ERR IR008 is a busy port', async (t) => {
+  const s = await ready(t);
+  s.fake.version = '710-1008-05';
+  let ack = await scene(s, { connector: '1:1', code: CODE });
+  assert.match(ack.error, /répond à la place/);
+  assert.equal(s.fake.requests('sendir').length, 0);
+  s.fake.version = '710-1005-05';
+  s.fake.hooks.push((line) => (line.startsWith('sendir') ? 'ERR IR008' : undefined));
+  ack = await scene(s, { connector: '1:1', code: CODE });
+  assert.match(ack.error, /occupé/);
+});
+
+test('stopping while a code transmits: said sent without confirmation, not "nothing sent"', async (t) => {
+  const s = await ready(t);
+  s.fake.irMs = 60_000;
+  const pending = scene(s, { connector: '1:1', code: '40000,1,1,50000,50000,50000,10000' });
+  await until(() => s.fake.requests('sendir').length === 1);
+  await within(s.app.stop(), 4000, 'stop');
+  const ack = await pending;
+  assert.equal(ack.success, true, ack.error);
+  assert.deepEqual(ack.data.outputs, { confirmed: false });
 });

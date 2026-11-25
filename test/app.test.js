@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import net from 'node:net';
 import { RateLimiter } from '../src/events.js';
 import { startFakeGc } from './helpers/fakeGc.js';
-import { D, F, createAll, press, setup, until, within } from './helpers/app.js';
+import { D, DEAD_PORT, F, createAll, press, setup, until, within } from './helpers/app.js';
 
 const reads = (fake) => fake.requests('getversion').length;
 
@@ -157,14 +157,10 @@ test('unreachable, not a Global Caché, flooding: their status; the other gatewa
   );
   await new Promise((resolve) => http.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise((resolve) => http.close(resolve)));
-  const closed = net.createServer();
-  await new Promise((resolve) => closed.listen(0, '127.0.0.1', resolve));
-  const deadPort = closed.address().port;
-  await new Promise((resolve) => closed.close(resolve));
   const s = await setup(t, {
     fakes: [good, flood],
     config: {
-      gateways: `${good.host}, ${flood.host}, 127.0.0.1:${http.address().port}, 127.0.0.1:${deadPort}`,
+      gateways: `${good.host}, ${flood.host}, 127.0.0.1:${http.address().port}, 127.0.0.1:${DEAD_PORT}`,
     },
   });
   await s.advanceUntil(
@@ -230,4 +226,32 @@ test('the test button during a reading joins it, never a second one', async (t) 
   await s.advanceUntil(() => !s.app.gateways.values().next().value.busy, { ms: 5000, every: 50 });
   assert.equal((await pending).success, true);
   assert.equal(reads(s.fake), 2);
+});
+
+test('two quick reconnections: the configuration of the latest one wins', async (t) => {
+  const s = await setup(t, { start: false });
+  const original = s.gladys.getConfig.bind(s.gladys);
+  let slowDone = false;
+  let late;
+  s.gladys.getConfig = async () => {
+    // The first read of our handler is slow (an old configuration), the next one quick.
+    if (!slowDone && !late) {
+      const config = await original();
+      await new Promise((resolve) => (late = resolve));
+      slowDone = true;
+      return { ...config, gateways: '10.9.9.9' };
+    }
+    return original();
+  };
+  const connecting = s.gladys.connect();
+  await until(() => late);
+  s.gladys.emit('connected');
+  await until(() => s.app.config);
+  late();
+  await within(connecting, 3000);
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.deepEqual(
+    s.app.config.hosts.map((h) => h.key),
+    [s.fake.host],
+  );
 });

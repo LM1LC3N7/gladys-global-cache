@@ -112,6 +112,8 @@ export function parseIrCode(raw) {
   // eslint-disable-next-line no-control-regex
   if (/[\u0000-\u0008\u000b-\u001f\u007f]/.test(text)) return { ok: false, reason: 'format' };
   if (/^0000(\s+[0-9a-f]{4})+$/i.test(text)) return parsePronto(text);
+  // Other Pronto kinds (0100 unmodulated, 5000 RC5...) are not converted.
+  if (/^[0-9a-f]{4}(\s+[0-9a-f]{4})+$/i.test(text)) return { ok: false, reason: 'prontoKind' };
   let connector;
   let rest = text.replace(/\s+/g, '');
   const head = /^sendir,(\d:\d),(\d{1,5}),/.exec(rest);
@@ -152,15 +154,28 @@ function check({ connector, freq, repeat, offset, values }) {
   }
   if (values.length < 2 || values.length % 2 !== 0) return { ok: false, reason: 'pairs' };
   if (values.length > LIMITS.irValues) return { ok: false, reason: 'tooLong' };
-  if (values.some((v) => !Number.isInteger(v) || v < 1 || v > 50_000)) {
+  // Every on and off state lasts 80 µs at least (Appendix A).
+  const shortest = minPulse(freq);
+  if (values.some((v) => !Number.isInteger(v) || v < shortest || v > 50_000)) {
     return { ok: false, reason: 'pulse' };
   }
-  if (!Number.isInteger(offset) || offset < 1 || offset % 2 === 0 || offset > values.length - 1) {
+  if (
+    !Number.isInteger(offset) ||
+    offset < 1 ||
+    offset > 383 ||
+    offset % 2 === 0 ||
+    offset > values.length - 1
+  ) {
     return { ok: false, reason: 'offset' };
   }
   const code = { ok: true, connector, freq, repeat, offset, values };
   if (irDuration(code) > LIMITS.irMaxMs) return { ok: false, reason: 'tooLongToSend' };
   return code;
+}
+
+/** The shortest pulse count at `freq`: 80 µs, rounded up. */
+export function minPulse(freq) {
+  return Math.max(1, Math.ceil((freq * 80) / 1_000_000 - 1e-9));
 }
 
 /** Length of the transmission, repeats included, in ms. */
@@ -176,8 +191,18 @@ export function sendirLine({ m, p }, id, { freq, repeat, offset, values }) {
   return `sendir,${m}:${p},${id},${freq},${repeat},${offset},${values.join(',')}`;
 }
 
-/** GC-100 accepts 20 to 500 kHz and 31 repeats; the others 15 kHz. */
-export function fitsFamily(family, code) {
-  if (family === 'gc100' && code.freq < 20_000) return false;
-  return true;
+/**
+ * The bounds of one product line (section 4.4.1) -> the reason a checked
+ * code does not fit, or undefined: GC-100 20 kHz and offset 255 at most;
+ * Flex and Global Connect pulse counts of 4 at least.
+ */
+export function familyLimit(family, code) {
+  if (family === 'gc100') {
+    if (code.freq < 20_000) return 'frequency';
+    if (code.offset > 255) return 'offset';
+  }
+  if ((family === 'flex' || family === 'connect') && code.values.some((v) => v < 4)) {
+    return 'pulse';
+  }
+  return undefined;
 }

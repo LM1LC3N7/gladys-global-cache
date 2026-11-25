@@ -2,20 +2,14 @@
   {
     "name": "pulse(): option check removed",
     "file": "src/gateway.js",
-    "from": "    if (!app.config?.allowRelays) notSent(T.relaysOff);\n    if (app.storeState === 'unreadable')",
-    "to": "    if (app.storeState === 'unreadable')"
+    "from": "    if (!app.config?.allowRelays) notSent(T.relaysOff);\n    if (app.stopping || app.stopped) notSent(T.stopping);",
+    "to": "    if (app.stopping || app.stopped) notSent(T.stopping);"
   },
   {
     "name": "beforeSend: option check removed",
     "file": "src/gateway.js",
     "from": "          if (!app.config?.allowRelays) notSent(T.relaysOff);\n          if ((this.cancels",
     "to": "          if ((this.cancels"
-  },
-  {
-    "name": "beforeSend: release meanwhile ignored",
-    "file": "src/gateway.js",
-    "from": "if ((this.cancels.get(relay) ?? 0) !== seq) notSent(T.releasedMeanwhile);",
-    "to": ""
   },
   {
     "name": "beforeSend: deadline ignored",
@@ -62,8 +56,8 @@
   {
     "name": "pulse: no release timer",
     "file": "src/gateway.js",
-    "from": "          wrote = true;\n          this.hold(m, p);",
-    "to": "          wrote = true;"
+    "from": "          job.wrote = true;\n          this.hold(m, p);",
+    "to": "          job.wrote = true;"
   },
   {
     "name": "pulse not sent: /data guard left",
@@ -126,18 +120,6 @@
     "to": ""
   },
   {
-    "name": "readings: kept releases sent again without end",
-    "file": "src/app.js",
-    "from": "if (tries >= this.timings.releaseReadTries) continue;",
-    "to": ""
-  },
-  {
-    "name": "stop: held relays not released",
-    "file": "src/app.js",
-    "from": "    if (held.length) {",
-    "to": "    if (false) {"
-  },
-  {
     "name": "queue: no limit",
     "file": "src/gateway.js",
     "from": "    if (this.commandsWaiting() >= LIMITS.queue) notSent(T.busy);\n    const deadline = received + app.timings.commandBudget;",
@@ -151,8 +133,8 @@
   },
   {
     "name": "IR: GC-100 frequency ignored",
-    "file": "src/gateway.js",
-    "from": "if (!fitsFamily(identity.family, code)) notSent(T.ir.frequency);",
+    "file": "src/protocol.js",
+    "from": "if (code.freq < 20_000) return 'frequency';",
     "to": ""
   },
   {
@@ -226,5 +208,119 @@
     "file": "src/config.js",
     "from": "allowRelays: bool(config.allow_relays),",
     "to": "allowRelays: config.allow_relays !== false,"
+  },
+  {
+    "name": "pulse: leaving not checked before the first byte",
+    "file": "src/gateway.js",
+    "from": "          if (this.stopped || app.stopped || app.stopping) notSent(T.stopping);\n          if (job.aborted) notSent(T.preempted);\n          if (this.mono() >= deadline - 200)",
+    "to": "          if (job.aborted) notSent(T.preempted);\n          if (this.mono() >= deadline - 200)"
+  },
+  {
+    "name": "stop: gateways not told (holds, pulses in flight)",
+    "file": "src/app.js",
+    "from": "    for (const gateway of this.gateways.values()) gateway.leaving();",
+    "to": ""
+  },
+  {
+    "name": "GC-100: pulse does not keep its connection",
+    "file": "src/gateway.js",
+    "from": "if (identity.family === 'gc100') {",
+    "to": "if (false) {"
+  },
+  {
+    "name": "release: a command that wrote nothing not dropped",
+    "file": "src/gateway.js",
+    "from": "      if (!current.wrote) {\n        this.abort(current);",
+    "to": "      if (false) {\n        this.abort(current);"
+  },
+  {
+    "name": "owed: not kept in memory when /data fails",
+    "file": "src/app.js",
+    "from": "      this.owed.set(key, had ? this.owed.get(key) : entry);\n",
+    "to": ""
+  },
+  {
+    "name": "owed: no own timer",
+    "file": "src/app.js",
+    "from": "      this.persist();\n      this.scheduleRetry(key);",
+    "to": "      this.persist();"
+  },
+  {
+    "name": "owed: guard kept after a failed save",
+    "file": "src/app.js",
+    "from": "if (!ok && !had) this.owed.delete(key);",
+    "to": ""
+  },
+  {
+    "name": "release: one try only",
+    "file": "src/gateway.js",
+    "from": "attempt < 3",
+    "to": "attempt < 1"
+  },
+  {
+    "name": "pulse: owed release ignored",
+    "file": "src/gateway.js",
+    "from": "this.holds.has(relay) || app.releaseOwed(this.host.key, m, p)",
+    "to": "this.holds.has(relay)"
+  },
+  {
+    "name": "/data: unreadable overwritten",
+    "file": "src/app.js",
+    "from": "    if (this.storeState === 'unreadable' || !this.data) return;\n    Promise.resolve",
+    "to": "    if (!this.data) return;\n    Promise.resolve"
+  },
+  {
+    "name": "/data: not read again",
+    "file": "src/app.js",
+    "from": "      this.scheduleDataRetry();\n      return;",
+    "to": "      return;"
+  },
+  {
+    "name": "/data: releases not sent when readable again",
+    "file": "src/app.js",
+    "from": "    if (before) this.persist();\n    this.sendKeptReleases();",
+    "to": "    if (before) this.persist();"
+  },
+  {
+    "name": "/data: FIFO open waits for a writer",
+    "file": "src/store.js",
+    "from": "constants.O_RDONLY | constants.O_NONBLOCK",
+    "to": "constants.O_RDONLY"
+  },
+  {
+    "name": "startOnConnect: an old configuration applied",
+    "file": "src/handlers.js",
+    "from": "      const config = await gladys.getConfig();\n      if (current !== run) return;",
+    "to": "      const config = await gladys.getConfig();"
+  },
+  {
+    "name": "IR: identity ignored",
+    "file": "src/gateway.js",
+    "from": "    if (identity.model !== created) notSent(T.otherDevice(identity.model, created));\n    const limit",
+    "to": "    const limit"
+  },
+  {
+    "name": "IR: IR008 not a busy port",
+    "file": "src/gateway.js",
+    "from": "err.code === 'busy' || err.code === 'IR008'",
+    "to": "err.code === 'busy'"
+  },
+  {
+    "name": "IR: GC-100 offset bound",
+    "file": "src/protocol.js",
+    "from": "if (code.offset > 255) return 'offset';",
+    "to": ""
+  },
+  {
+    "name": "IR: 80 µs bound",
+    "file": "src/protocol.js",
+    "from": "v < shortest ||",
+    "to": "v < 1 ||"
+  },
+  {
+    "name": "stop: a code already sent said not sent",
+    "file": "src/gateway.js",
+    "from": "    if (this.current?.retrying) this.current.reject(new CommandError(T.stopping));",
+    "to": "    this.current?.reject?.(new CommandError(T.stopping));"
   }
 ]

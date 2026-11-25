@@ -4,6 +4,7 @@
 // -----------------------------------------------------------------------------
 
 import { test } from 'node:test';
+import net from 'node:net';
 import assert from 'node:assert/strict';
 import { MemoryStore, emptyData, releaseKey } from '../src/store.js';
 import { startFakeGc } from './helpers/fakeGc.js';
@@ -209,31 +210,95 @@ test('a pulse sent without answer: "sent, without confirmation", the release sti
   await s.advanceUntil(() => s.fake.state.relays.get('1:1') === 0, { ms: 3000 });
 });
 
-test('the gateway unreachable at release time: kept in /data, sent again by 3 readings at most', async (t) => {
-  const s = await ready(t);
+test('the gateway silent at release time: kept, sent again on its own timer (1 s, 2 s, 5 s…), no reading needed', async (t) => {
+  const s = await ready(t, { config: { poll_interval: 3600 } });
+  const g = s.app.gateways.values().next().value;
   assert.equal((await press(s.gladys, s.fake.host, PULSE)).success, true);
   s.fake.silent = true;
-  await s.advanceUntil(() => s.app.gateways.values().next().value.holds.size === 0, { ms: 2000 });
-  await s.advanceUntil(() => !s.app.gateways.values().next().value.busy, { ms: 10_000 });
+  await s.advanceUntil(() => g.holds.size === 0, { ms: 2000 });
+  await s.advanceUntil(() => !g.busy, { ms: 10_000 });
   assert.deepEqual(Object.keys(s.store.data.releases), [releaseKey(s.fake.host, 1, 1)]);
-  assert.match(s.app.statusLine(s.app.gateways.values().next().value).fr, /relâchement/);
-  // The gateway answers getversion etc. but ignores the release: three tries by readings.
-  s.fake.silent = false;
-  s.fake.mute.add('setstate,1:1,0');
+  assert.match(s.app.statusLine(g).fr, /renvoyé\(s\) automatiquement/);
+  // While it is owed, no new pulse of that relay.
+  assert.match((await press(s.gladys, s.fake.host, PULSE)).error, /encore fermé/);
+  const versions = sent(s.fake, 'getversion');
   const before = sent(s.fake, 'setstate,1:1,0');
-  for (let i = 0; i < 6; i += 1) {
-    await s.step(30_000);
-    await s.advanceUntil(() => !s.app.gateways.values().next().value.busy, { ms: 10_000 });
-  }
-  // One release per reading (its budget is spent by its first timeout), 3 readings only.
-  assert.equal(sent(s.fake, 'setstate,1:1,0') - before, 3);
-  // Answering again: the next reading after a restart of the tries releases it.
-  s.fake.mute.clear();
-  s.app.releaseTries.clear();
-  await s.step(30_000);
-  await s.advanceUntil(() => !s.app.gateways.values().next().value.busy, { ms: 10_000 });
-  await until(() => Object.keys(s.store.data.releases).length === 0);
+  await s.advanceUntil(() => sent(s.fake, 'setstate,1:1,0') - before >= 3, { ms: 20_000 });
+  assert.equal(sent(s.fake, 'getversion'), versions, 'no reading involved');
+  // Back: the next try of its own timer releases it.
+  s.fake.silent = false;
+  await s.advanceUntil(() => s.app.owed.size === 0, { ms: 70_000, every: 500 });
   assert.equal(s.fake.state.relays.get('1:1'), 0);
+  assert.equal(Object.keys(s.store.data.releases).length, 0);
+});
+
+test('a release failing once is tried again at once (3 tries within 250 ms)', async (t) => {
+  const s = await ready(t);
+  let first = true;
+  s.fake.hooks.push((line) => {
+    if (line === 'setstate,1:1,0' && first) {
+      first = false;
+      return 'ERR_1:1,001';
+    }
+    return undefined;
+  });
+  const ack = await press(s.gladys, s.fake.host, RELEASE);
+  assert.equal(ack.success, true, ack.error);
+  assert.equal(sent(s.fake, 'setstate,1:1,0'), 2);
+});
+
+test('/data not written once: the guard is forgotten, the next pulse goes', async (t) => {
+  const s = await ready(t);
+  s.store.failing = true;
+  assert.equal((await press(s.gladys, s.fake.host, PULSE)).success, false);
+  assert.equal(s.app.owed.size, 0);
+  s.store.failing = false;
+  const ack = await press(s.gladys, s.fake.host, PULSE);
+  assert.equal(ack.success, true, ack.error);
+});
+
+test('/data unreadable: a failed release is kept in memory, sent again, the file never written', async (t) => {
+  const store = new MemoryStore(undefined, { state: 'unreadable' });
+  const s = await ready(t, { store, config: { poll_interval: 3600 } });
+  const g = s.app.gateways.values().next().value;
+  // Closed by another app, or by a run whose /data turned unreadable.
+  s.fake.state.relays.set('1:3', 1);
+  s.fake.silent = true;
+  const pending = press(s.gladys, s.fake.host, 'relay-1-3-release');
+  await s.advanceUntil(() => !g.busy, { ms: 5000, every: 50 });
+  const ack = await pending;
+  assert.equal(ack.success, false);
+  assert.match(ack.error, /renvoyé dans 1 s/);
+  assert.equal(s.app.owed.size, 1);
+  assert.match(s.app.statusLine(g).fr, /mémoire seulement/);
+  s.fake.silent = false;
+  await s.advanceUntil(() => s.fake.state.relays.get('1:3') === 0, { ms: 30_000, every: 200 });
+  await until(() => s.app.owed.size === 0);
+  assert.equal(store.saves, 0, 'an unreadable /data is never overwritten');
+});
+
+test('/data readable again (read every 10 s): its releases are sent, those owed meanwhile written', async (t) => {
+  const fake = await startFakeGc('IP2CC');
+  fake.state.relays.set('1:2', 1);
+  const store = new MemoryStore(undefined, { state: 'unreadable' });
+  const s = await ready(t, { fakes: [fake], store, config: { poll_interval: 3600 } });
+  s.fake.silent = true;
+  const pending = press(s.gladys, fake.host, 'relay-1-3-release');
+  await s.advanceUntil(() => !s.app.gateways.values().next().value.busy, { ms: 5000, every: 50 });
+  await pending;
+  s.fake.silent = false;
+  s.fake.mute.add('setstate,1:3,0');
+  // A read every 10 s while it stays unreadable...
+  await s.step(12_000);
+  assert.equal(s.app.storeState, 'unreadable');
+  // ...and the next one finds it readable.
+  store.state = 'ok';
+  store.data.releases[releaseKey(fake.host, 1, 2)] = { host: fake.host, m: 1, p: 2, at: 1 };
+  await s.step(10_000);
+  await until(() => s.app.storeState === 'ok');
+  await s.advanceUntil(() => fake.state.relays.get('1:2') === 0, { ms: 3000, every: 50 });
+  await until(() => store.saves > 0);
+  assert.ok(Object.keys(store.data.releases).includes(releaseKey(fake.host, 1, 3)));
 });
 
 test('restart: a release kept in /data is sent before the configuration is read', async (t) => {
@@ -349,7 +414,7 @@ test('a release asked while the pulse reads (before its first byte): the pulse n
   });
   const ack = await press(s.gladys, s.fake.host, PULSE);
   assert.equal(ack.success, false);
-  assert.match(ack.error, /Relâchement demandé/);
+  assert.match(ack.error, /passe devant|Relâchement demandé/);
   assert.equal((await release).success, true);
   assert.deepEqual(s.fake.requests('setstate'), ['setstate,1:1,0']);
   await until(() => Object.keys(s.store.data.releases).length === 0);
@@ -383,4 +448,102 @@ test('a release of a relay never pulsed, gateway silent: kept in /data all the s
   assert.equal((await pending).success, false);
   await until(() => Object.keys(s.store.data.releases).length === 1);
   assert.equal(Object.values(s.store.data.releases)[0].p, 2);
+});
+
+test('stopping while a pulse reads: it never leaves; the relay held is released', async (t) => {
+  const s = await ready(t, { config: { pulse_ms: 5000 } });
+  assert.equal((await press(s.gladys, s.fake.host, PULSE)).success, true);
+  let stopping;
+  s.fake.hooks.push((line) => {
+    if (line === 'getstate,1:2' && !stopping) stopping = s.app.stop();
+    return undefined;
+  });
+  const ack = await press(s.gladys, s.fake.host, 'relay-1-2-pulse');
+  assert.equal(ack.success, false);
+  await within(stopping, 4000, 'stop');
+  assert.equal(sent(s.fake, 'setstate,1:2,1'), 0);
+  assert.equal(s.fake.state.relays.get('1:1'), 0);
+});
+
+test('stopping right as a pulse is written: that relay is released before leaving', async (t) => {
+  const s = await ready(t, { config: { pulse_ms: 5000 } });
+  let stopping;
+  s.fake.hooks.push((line) => {
+    if (line === 'setstate,1:2,1' && !stopping) stopping = s.app.stop();
+    return undefined;
+  });
+  await press(s.gladys, s.fake.host, 'relay-1-2-pulse');
+  await within(stopping, 4000, 'stop');
+  assert.deepEqual(
+    s.fake.history.map((h) => `${h.key}=${h.value}`),
+    ['1:2=1', '1:2=0'],
+  );
+});
+
+test('GC-100: the pulse keeps its connection, its release goes on it; the ack comes at once', async (t) => {
+  const s = await ready(t, { model: 'GC100', config: { pulse_ms: 2000 } });
+  const pending = press(s.gladys, s.fake.host, 'relay-3-1-pulse');
+  await s.advanceUntil(() => s.fake.state.relays.get('3:1') === 1, { ms: 1000, every: 50 });
+  const ack = await pending;
+  assert.equal(ack.success, true, ack.error);
+  assert.equal(s.fake.state.relays.get('3:1'), 1, 'acked while the contact is closed');
+  // Another app tries the single connection meanwhile: refused, ours is kept.
+  const other = net.connect({ host: '127.0.0.1', port: s.fake.port });
+  other.on('error', () => {});
+  await until(() => s.fake.refused >= 1);
+  other.destroy();
+  await s.step(2000);
+  await until(() => s.fake.state.relays.get('3:1') === 0);
+  const [on, off] = s.fake.history;
+  assert.equal(on.conn, off.conn, 'the release went on the connection of the pulse');
+});
+
+test('GC-100: stopping during a held pulse releases it on its connection', async (t) => {
+  const s = await ready(t, { model: 'GC100', config: { pulse_ms: 5000 } });
+  const pending = press(s.gladys, s.fake.host, 'relay-3-2-pulse');
+  await s.advanceUntil(() => s.fake.state.relays.get('3:2') === 1, { ms: 1000, every: 50 });
+  await pending;
+  await within(s.app.stop(), 4000, 'stop');
+  assert.equal(s.fake.state.relays.get('3:2'), 0);
+});
+
+test('a release does not wait for a pulse stuck on /data (nothing written yet)', async (t) => {
+  const s = await ready(t);
+  let free;
+  s.store.stuck = new Promise((resolve) => (free = resolve));
+  const pulse = press(s.gladys, s.fake.host, PULSE);
+  await until(() => sent(s.fake, 'getstate,1:1') >= 2);
+  await sleep(10);
+  const ack = await press(s.gladys, s.fake.host, 'relay-1-2-release');
+  assert.equal(ack.success, true, ack.error);
+  free();
+  const refused = await pulse;
+  assert.match(refused.error, /passe devant/);
+  assert.equal(sent(s.fake, 'setstate,1:1,1'), 0);
+});
+
+test('the stop flag is read right before the first byte of a pulse', async (t) => {
+  const s = await ready(t);
+  s.fake.hooks.push((line) => {
+    if (line === 'getstate,1:1') s.app.stopping = true;
+    return undefined;
+  });
+  const ack = await press(s.gladys, s.fake.host, PULSE);
+  assert.match(ack.error, /arrêt/);
+  assert.equal(sent(s.fake, 'setstate'), 0);
+  s.app.stopping = false;
+});
+
+test('a successful reading sends an owed release at once (its own timer far away)', async (t) => {
+  const s = await ready(t, { timings: { releaseRetry: [600_000] } });
+  const g = s.app.gateways.values().next().value;
+  assert.equal((await press(s.gladys, s.fake.host, PULSE)).success, true);
+  s.fake.silent = true;
+  await s.advanceUntil(() => g.holds.size === 0, { ms: 2000 });
+  await s.advanceUntil(() => !g.busy, { ms: 10_000 });
+  assert.equal(s.app.owed.size, 1);
+  s.fake.silent = false;
+  await s.step(30_000);
+  await s.advanceUntil(() => s.app.owed.size === 0, { ms: 5000, every: 50 });
+  assert.equal(s.fake.state.relays.get('1:1'), 0);
 });

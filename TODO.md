@@ -14,6 +14,8 @@
   in flight (never pipelined): a GC-100 serves a single connection and other apps may need it. A
   connection the gateway closes before saying a word (it may still be freeing the previous one) is
   opened again once, 50 ms later (the first request of a job is always a version read or a release).
+- Addresses: 0.x and 224 and up refused; a last byte .0 or .255 is accepted (a host of a /16 to /23
+  network; review r1).
 - Identity: the API gives no serial nor MAC, the external id is the configured address (dots and
   colons as dashes; two addresses that would share an id: the second is refused). The model read by
   getversion is compared with the `model` param of the created device before every command and at
@@ -26,15 +28,26 @@
   sent); `setstate,<m>:<p>,1`; the release timer starts at the first byte, whatever the answer. The
   `period` parameter of setstate is not used (not documented for every product line): the module
   releases the relay itself.
-- Release (protective): never refused (no option, no config, no identity); ahead of every job; cancels
-  the pulses of that relay waiting (a number bumped at each release, checked in `beforeSend`); cuts a
-  reading at once (not a failure) and a command silent for 1 s; confirmed by a getstate read after it;
-  retried within 250 ms (3 attempts), then kept in `/data`, sent again by the next 3 successful readings
-  and at every start (`app.boot()`, before the configuration is read). A release of a gateway removed
-  from the configuration still goes (its gateway object lives until idle). At stop, held relays are
-  released (1 s real time at most).
+- Release (protective): never refused by the option, the config or the identity; ahead of every job;
+  cancels the pulses of that relay waiting (a number bumped at each release, checked in `beforeSend`);
+  cuts a reading or a command that wrote nothing yet at once (the next job starts), a command already
+  sent once silent for 1 s; confirmed by a getstate read after it; retried within 250 ms (3 attempts).
+  Then owed: in memory always and in `/data` when readable (unreadable: memory only, said in the status
+  and the docs, written back when `/data` is readable again), sent again on its own timer (1, 2, 5, 10,
+  30 s, then every minute, without end), at every successful reading and at every start (`app.boot()`,
+  before the configuration is read). Review r1 (B2, B3).
+- GC-100 (single connection, review r1 B3): the pulse job keeps its connection for the pulse length
+  (the ack is given at the first answer) and runs every release that comes on it, its own at the end;
+  other commands and readings to that GC-100 wait for the end of the pulse (10 s at most). Other product
+  lines serve 8 connections: their release opens one of its own.
+- Stop (review r1 B1): `stopping` set at once, checked before the first byte of a pulse or an IR code;
+  readings and waiting commands dropped, a command that wrote nothing dropped, every relay held
+  released, and the app waits (real time, 2 s) until no release is waiting nor running; a release not
+  sent by then is kept in `/data`. An IR code already sent ends as "sent, without confirmation".
 - IR: codes checked against the manual bounds (15–500 kHz, GC-100 ≥ 20 kHz, repeat ≤ 20 — the lowest
-  of the product lines —, pairs, 1–50000, odd offset, 512 values, 5 s of transmission); our own ID
+  of the product lines —, pairs, ≤ 50000 and 80 µs at least each, ≥ 4 on Flex and Global Connect, odd
+  offset ≤ 383 and ≤ 255 on GC-100, 512 values, 5 s of transmission); `busyIR` and `ERR IR008` = busy
+  port; only learned Pronto codes (0000); our own ID
   (1–65535); port mode read again (get_IR) right before, except on Flex (its port parameter means the
   cable); completeir awaited (length + 1.5 s); busyIR/ERR = refused; no answer = "sent, without
   confirmation" (`confirmed: false`, the scene goes on). Pronto learned codes (0000) converted;
@@ -57,4 +70,5 @@
 - TCP change notifications (`getstate,<m>:<p>,notify`, GC-100 `statechange`) on a held connection,
   for inputs faster than the interval.
 - Compressed GC IR format; a library of named codes in the configuration.
+- Flex: `setstate,<m>:<p>,1,<period>` (documented) would add a release on the gateway side.
 - Mutation check of the guards: `memcap node scripts/mutants.mjs` (scripts/mutants.json).

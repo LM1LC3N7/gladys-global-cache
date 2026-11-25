@@ -31,7 +31,15 @@ test('missing: empty; garbage, too large, a FIFO, a link: unreadable, within the
   execFileSync('mkfifo', [store.path]);
   const started = Date.now();
   assert.equal((await within(store.load(), 5000, 'FIFO load')).state, 'unreadable');
-  assert.ok(Date.now() - started < 3000);
+  // O_NONBLOCK: the open never waits for a writer, the read slot is free at once.
+  const elapsed = Date.now() - started;
+  if (elapsed >= 1000) {
+    // A blocking open (a regression) is woken first: the test fails, never hangs.
+    const wake = await open(store.path, constants.O_RDWR | constants.O_NONBLOCK);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await wake.close();
+  }
+  assert.ok(elapsed < 1000, `${elapsed} ms`);
   const writer = await open(store.path, constants.O_RDWR | constants.O_NONBLOCK);
   t.after(() => writer.close().catch(() => {}));
   await writer.write(JSON.stringify(emptyData()));

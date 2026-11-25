@@ -29,6 +29,13 @@ export async function until(condition, ms = 3000) {
   }
 }
 
+/**
+ * A port that refuses (ECONNREFUSED) for sure: port 1 is privileged, no test
+ * can listen on it (a port closed after listen(0) could be taken again by
+ * another test file running at the same time).
+ */
+export const DEAD_PORT = 1;
+
 export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** A promise that rejects after `ms` (real time): no test waits without end. */

@@ -65,8 +65,17 @@ export class GlobalCacheApp {
     this.discoveryQueued = false;
     this.published = new Map();
     this.dataTimer = undefined;
-    /** Release key -> tries made by the readings. */
-    this.releaseTries = new Map();
+    /**
+     * The releases owed (key -> { host, m, p, at }): in memory always, and
+     * in /data whenever the file is readable (an unreadable /data never
+     * loses one: it is kept here and sent again all the same).
+     */
+    this.owed = new Map();
+    /** Release key -> { tries, due }: the next try of an owed release (its own timer). */
+    this.retries = new Map();
+    this.retryTimer = undefined;
+    /** Set as soon as stop() starts: no pulse nor IR code leaves after it. */
+    this.stopping = false;
     this.stateLimiter = new RateLimiter(LIMITS.statesPerMinute);
   }
 
@@ -82,11 +91,11 @@ export class GlobalCacheApp {
   }
 
   sendKeptReleases() {
-    if (this.stopped || !this.data) return;
-    for (const entry of Object.values(this.data.releases)) {
+    if (this.stopped) return;
+    for (const entry of [...this.owed.values()]) {
       const host = parseHost(entry.host);
       if (!host) continue;
-      this.logger.info(`Relay ${entry.m}:${entry.p} of ${host.key}: release kept in /data, sent`);
+      this.logger.info(`Relay ${entry.m}:${entry.p} of ${host.key}: release owed, sent`);
       this.gatewayFor(host)
         .release(entry.m, entry.p)
         .catch(() => {});
@@ -111,6 +120,9 @@ export class GlobalCacheApp {
       }
       this.data = loaded.state === 'unreadable' ? emptyData() : (loaded.data ?? emptyData());
       this.storeState = loaded.state;
+      for (const [key, entry] of Object.entries(this.data.releases)) {
+        if (!this.owed.has(key)) this.owed.set(key, entry);
+      }
       if (loaded.state === 'unreadable') this.scheduleDataRetry();
     })();
     return this.dataLoading;
@@ -138,13 +150,16 @@ export class GlobalCacheApp {
       this.scheduleDataRetry();
       return;
     }
-    // Readable now: its releases are sent; one owed meanwhile is kept too.
-    const meanwhile = this.data.releases;
+    // Readable now: its releases join the ones owed meanwhile (kept in
+    // memory), all written back and sent.
+    const before = this.owed.size;
+    for (const [key, entry] of Object.entries(loaded.data.releases)) {
+      if (!this.owed.has(key)) this.owed.set(key, entry);
+    }
     this.data = loaded.data;
-    for (const [key, entry] of Object.entries(meanwhile)) this.data.releases[key] ??= entry;
     this.storeState = loaded.state;
     this.logger.info('/data read again');
-    if (Object.keys(meanwhile).length) this.persist();
+    if (before) this.persist();
     this.sendKeptReleases();
     this.refreshStatus();
   }
@@ -208,23 +223,22 @@ export class GlobalCacheApp {
     return this.gateways.get(gateway.host.key) === gateway && gateway.polling;
   }
 
+  /**
+   * Leaving: nothing more leaves but releases. Every relay held, being
+   * pulsed or with a release waiting is released within a bounded window
+   * (real time, 2 s); what is left stays owed in /data for the next start.
+   */
   async stop() {
-    if (this.stopped) return;
-    // A pulse under way is released before leaving (bounded); /data keeps it otherwise.
-    const held = [...this.gateways.values()].flatMap((g) =>
-      [...g.holds.keys()].map((relay) => ({ g, relay })),
-    );
-    if (held.length) {
-      await Promise.race([
-        Promise.allSettled(
-          held.map(({ g, relay }) => {
-            const [m, p] = relay.split(':').map(Number);
-            return g.release(m, p);
-          }),
-        ),
-        // Real time on purpose: the process is leaving, whatever the clock given.
-        new Promise((resolve) => setTimeout(resolve, 1000).unref?.()),
-      ]);
+    if (this.stopped || this.stopping) return;
+    this.stopping = true;
+    this.timers.clearTimeout(this.retryTimer);
+    for (const gateway of this.gateways.values()) gateway.leaving();
+    const end = performance.now() + this.timings.stopWindow;
+    const settled = () =>
+      [...this.gateways.values()].every((g) => !g.current && !g.queue.length && !g.holds.size);
+    // Real time on purpose: the process is leaving, whatever the clock given.
+    while (!settled() && performance.now() < end) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
     }
     this.stopped = true;
     this.timers.clearTimeout(this.dataTimer);
@@ -236,72 +250,119 @@ export class GlobalCacheApp {
   // --- releases kept in /data ------------------------------------------------------
 
   releaseOwed(hostKey, m, p) {
-    return Boolean(this.data?.releases[releaseKey(hostKey, m, p)]);
+    return this.owed.has(releaseKey(hostKey, m, p));
   }
 
   /**
-   * Keeps a coming release in /data. With `ms`: awaited, true only when
-   * written within `ms`; without: written in the background.
+   * Keeps a release owed. With `ms` (a pulse, before its first byte):
+   * written to /data and awaited, true only when written within `ms` (not
+   * written: forgotten again). Without (a release that failed): kept in
+   * memory in any case, written in the background when /data is readable,
+   * and tried again on its own timer.
    */
   async keepRelease(host, m, p, ms) {
-    if (this.storeState === 'unreadable' || !this.data) return false;
     const key = releaseKey(host.key, m, p);
-    const had = this.data.releases[key];
-    if (!had && Object.keys(this.data.releases).length >= LIMITS.releases) return false;
-    this.data.releases[key] = { host: host.key, m, p, at: this.now() };
+    const had = this.owed.has(key);
+    const entry = { host: host.key, m, p, at: this.now() };
     if (ms === undefined) {
+      this.owed.set(key, had ? this.owed.get(key) : entry);
       this.persist();
+      this.scheduleRetry(key);
+      this.refreshStatus();
       return true;
     }
+    if (this.storeState === 'unreadable' || !this.data) return false;
+    if (!had && this.owed.size >= LIMITS.releases) return false;
+    this.owed.set(key, entry);
     let ok;
     try {
-      ok =
-        (await withTimeout(this.store.save(structuredClone(this.data)), ms, this.timers)) !== false;
+      ok = (await withTimeout(this.store.save(this.snapshot()), ms, this.timers)) !== false;
     } catch {
       ok = false;
     }
-    if (!ok && !had) delete this.data.releases[key];
+    if (!ok && !had) this.owed.delete(key);
     return ok;
   }
 
   dropRelease(hostKey, m, p) {
     const key = releaseKey(hostKey, m, p);
-    this.releaseTries.delete(key);
-    if (!this.data?.releases[key]) return;
-    delete this.data.releases[key];
+    this.retries.delete(key);
+    if (!this.owed.delete(key)) return;
     this.persist();
     this.refreshStatus();
   }
 
-  /** After a reading: the releases owed to that gateway sent again, 3 times at most. */
-  retryReleases(gateway) {
-    if (!this.data) return;
-    for (const entry of Object.values(this.data.releases)) {
-      if (entry.host !== gateway.host.key) continue;
-      const relay = `${entry.m}:${entry.p}`;
-      if (gateway.holds.has(relay)) continue;
-      if (
-        [gateway.current, ...gateway.queue].some((j) => j?.kind === 'release' && j.relay === relay)
-      ) {
+  /** Next try of an owed release: 1 s, 2 s, 5 s, 10 s, 30 s, then every minute. */
+  scheduleRetry(key) {
+    if (this.stopped || this.stopping || !this.owed.has(key)) return;
+    const state = this.retries.get(key) ?? { tries: 0 };
+    const delays = this.timings.releaseRetry;
+    state.due = this.monotonic() + delays[Math.min(state.tries, delays.length - 1)];
+    state.tries += 1;
+    this.retries.set(key, state);
+    this.armRetryTimer();
+  }
+
+  armRetryTimer() {
+    this.timers.clearTimeout(this.retryTimer);
+    this.retryTimer = undefined;
+    if (this.stopped || this.stopping || !this.retries.size) return;
+    const next = Math.min(...[...this.retries.values()].map((r) => r.due));
+    this.retryTimer = this.timers.setTimeout(
+      () => this.runRetries(),
+      Math.max(0, next - this.monotonic()),
+    );
+  }
+
+  runRetries() {
+    this.retryTimer = undefined;
+    const mono = this.monotonic();
+    for (const [key, state] of [...this.retries]) {
+      const entry = this.owed.get(key);
+      if (!entry) {
+        this.retries.delete(key);
         continue;
       }
-      const key = releaseKey(entry.host, entry.m, entry.p);
-      const tries = this.releaseTries.get(key) ?? 0;
-      if (tries >= this.timings.releaseReadTries) continue;
-      this.releaseTries.set(key, tries + 1);
+      if (state.due > mono) continue;
+      state.due = Infinity; // the outcome of this try schedules the next one
+      const host = parseHost(entry.host);
+      if (!host) continue;
+      this.gatewayFor(host)
+        .release(entry.m, entry.p)
+        .catch(() => {});
+    }
+    this.armRetryTimer();
+  }
+
+  /**
+   * After a reading: the gateway answers, the releases owed to it are tried
+   * at once (one try per reading; their own timer goes on besides).
+   */
+  retryReleases(gateway) {
+    for (const entry of [...this.owed.values()]) {
+      if (entry.host !== gateway.host.key) continue;
+      const relay = `${entry.m}:${entry.p}`;
+      if (gateway.holds.has(relay) || gateway.releasing(relay)) continue;
       gateway.release(entry.m, entry.p).catch(() => {});
     }
   }
 
   owedCount(gateway) {
-    return Object.values(this.data?.releases ?? {}).filter((e) => e.host === gateway.host.key)
-      .length;
+    return [...this.owed.values()].filter((e) => e.host === gateway.host.key).length;
+  }
+
+  /** What /data holds: the owed releases (64 at most). */
+  snapshot() {
+    return {
+      ...structuredClone(this.data ?? emptyData()),
+      releases: Object.fromEntries([...this.owed].slice(0, LIMITS.releases)),
+    };
   }
 
   /** Never awaited: a slow disk holds nothing. An unreadable file is never overwritten. */
   persist() {
     if (this.storeState === 'unreadable' || !this.data) return;
-    Promise.resolve(this.store.save(structuredClone(this.data))).then(
+    Promise.resolve(this.store.save(this.snapshot())).then(
       (ok) => {
         if (ok === false) this.logger.warn('/data could not be written');
       },
@@ -419,7 +480,7 @@ export class GlobalCacheApp {
     const gateway = [...this.gateways.values()].find((g) => g.host.id === target.hostId);
     if (target.what === 'release') {
       // Protective: no configuration, no option, no reading needed.
-      const host = gateway?.host ?? hostOfDevice(device, target.hostId, this.data);
+      const host = gateway?.host ?? hostOfDevice(device, target.hostId, this.owed);
       if (!host) refuse(T.unknownDevice);
       try {
         return pick(await this.gatewayFor(host).release(target.m, target.p), language);
@@ -520,7 +581,7 @@ export class GlobalCacheApp {
     }
     const extras = [];
     const owed = this.owedCount(gateway);
-    if (owed) extras.push(T.owed(key, owed));
+    if (owed) extras.push(T.owed(key, owed, this.storeState === 'unreadable'));
     if (gateway.lastCommand) extras.push(T.lastCommand(gateway.lastCommand));
     return extras.length ? join([line, ...extras]) : line;
   }
@@ -564,13 +625,13 @@ export class GlobalCacheApp {
 
 /**
  * The address behind a device id before the configuration is read: the
- * `address` param of the device, or a release kept in /data.
+ * `address` param of the device, or a release owed.
  */
-function hostOfDevice(device, id, data) {
+function hostOfDevice(device, id, owed) {
   const param = (device?.params ?? []).find((p) => p.name === 'address');
   const fromDevice = parseHost(param?.value);
   if (fromDevice?.id === id) return fromDevice;
-  for (const entry of Object.values(data?.releases ?? {})) {
+  for (const entry of owed.values()) {
     const host = parseHost(entry.host);
     if (host?.id === id) return host;
   }

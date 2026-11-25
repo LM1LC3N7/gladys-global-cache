@@ -14,7 +14,8 @@ import {
   parseIrCode,
   parseVersion,
   sendirLine,
-  fitsFamily,
+  familyLimit,
+  minPulse,
 } from '../src/protocol.js';
 
 test('versions of every product line; anything else is no version', () => {
@@ -143,13 +144,22 @@ test('IR codes outside the API bounds are refused with their reason, never sent'
   assert.equal(parseIrCode('40000,9,1,10000,10000').ok, true);
 });
 
-test('IR duration counts the repeats from the offset; GC-100 needs 20 kHz', () => {
+test('IR duration counts the repeats from the offset; the bounds of each product line', () => {
   assert.equal(irDuration({ freq: 1000, repeat: 1, offset: 1, values: [500, 500] }), 1000);
   assert.equal(
     irDuration({ freq: 1000, repeat: 3, offset: 3, values: [100, 100, 200, 200] }),
     1400,
   );
-  assert.equal(fitsFamily('gc100', { freq: 19_000 }), false);
-  assert.equal(fitsFamily('gc100', { freq: 20_000 }), true);
-  assert.equal(fitsFamily('itach', { freq: 15_000 }), true);
+  assert.equal(familyLimit('gc100', { freq: 19_000, offset: 1, values: [10] }), 'frequency');
+  assert.equal(familyLimit('gc100', { freq: 20_000, offset: 257, values: [10] }), 'offset');
+  assert.equal(familyLimit('gc100', { freq: 20_000, offset: 255, values: [10] }), undefined);
+  assert.equal(familyLimit('itach', { freq: 15_000, offset: 301, values: [2] }), undefined);
+  assert.equal(familyLimit('flex', { freq: 15_000, offset: 1, values: [3, 10] }), 'pulse');
+  assert.equal(familyLimit('connect', { freq: 15_000, offset: 1, values: [3, 10] }), 'pulse');
+  // 80 µs: 4 periods at 38 or 40 kHz, 2 at 15 kHz, 8 at 100 kHz.
+  assert.deepEqual([38_000, 40_000, 15_000, 100_000].map(minPulse), [4, 4, 2, 8]);
+  assert.equal(parseIrCode('40000,1,1,3,10').reason, 'pulse');
+  assert.equal(parseIrCode('40000,1,1,4,10').ok, true);
+  assert.equal(parseIrCode(`40000,2,385,${new Array(400).fill(10).join(',')}`).reason, 'offset');
+  assert.equal(parseIrCode('0100 006D 0000 0002 0010 0010 0010 0BB8').reason, 'prontoKind');
 });

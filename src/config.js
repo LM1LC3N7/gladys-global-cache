@@ -18,11 +18,15 @@ const CONTROL = /[\u0000-\u001f\u007f]/;
 const HOSTNAME =
   /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/i;
 
-/** An IPv4 address that is not a gateway: any, loopback-free "this network", broadcast, multicast. */
+/**
+ * An IPv4 address that is never a gateway: "this network" (0.x), multicast,
+ * reserved and the limited broadcast (224 and up). A last byte .0 or .255
+ * is a host in a /16 to /23 network: accepted (the mask is unknown here,
+ * and a TCP connection to a subnet broadcast address fails anyway).
+ */
 function unusableIpv4(address) {
-  const parts = address.split('.').map(Number);
-  if (parts[0] === 0 || parts[0] >= 224) return true;
-  return parts[3] === 255 || parts[3] === 0;
+  const first = Number(address.split('.')[0]);
+  return first === 0 || first >= 224;
 }
 
 /**

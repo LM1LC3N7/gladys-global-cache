@@ -44,11 +44,14 @@ Safety rules (see TODO.md "Decisions"): a relay pulse is off by default, a
 push button, never a switch; the option is read again right before the
 bytes leave; identity, port and relay state are read again on the same
 connection right before; the coming release is written in `/data` before the
-first byte (not written, nothing sent); the release (opening the contact) is
-never refused, goes ahead of everything, cancels the pulses waiting, cuts a
-reading at once and a silent command after 1 s, is tried again within its
-budget, then kept in `/data`, sent again by the next readings (3 times) and
-at every start, before the configuration is read.
+first byte (not written, nothing sent); the release (opening the contact)
+needs neither the option nor a reading, goes ahead of everything, cancels the
+pulses waiting, cuts a reading or a command that wrote nothing at once and a
+silent command after 1 s, is tried again within its budget, then owed (memory
+and `/data`) and sent again on its own timer (1 s to 1 min), at every reading
+and at every start, before the configuration is read. A GC-100 pulse keeps
+its connection and its release goes on it. The stop sends no pulse and
+releases every relay held or waiting (2 s at most).
 
 ## Rules
 

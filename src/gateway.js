@@ -34,7 +34,7 @@ import {
 } from './link.js';
 import {
   IR_TYPES,
-  fitsFamily,
+  familyLimit,
   irDuration,
   parseDeviceLine,
   parseVersion,
@@ -159,7 +159,7 @@ export class Gateway {
             ? this.app.timings.connectTimeout
             : Math.min(this.app.timings.connectTimeout, job.deadline - this.mono());
         await link.open(Math.max(1, budget));
-        job.resolve(await job.run(link));
+        job.resolve(await job.run(link, job));
       } catch (err) {
         // Closed by the gateway before it said a word: it may still be
         // freeing the previous connection (a GC-100 serves one). The first
@@ -168,16 +168,22 @@ export class Gateway {
         retry =
           attempt === 0 &&
           !this.stopped &&
+          !job.aborted &&
           link.bytesIn === 0 &&
           (err?.kind === 'closed' || err?.kind === 'unreachable') &&
           (job.deadline === undefined || job.deadline - this.mono() > 600);
-        if (!retry) job.reject(err);
+        if (!retry) {
+          // Given way to a release before its first byte: said so.
+          job.reject(job.aborted && !job.wrote ? new CommandError(T.preempted) : err);
+        }
       } finally {
         // The next connection opens only once this one is closed.
         await link.close();
       }
       if (!retry) return;
+      job.retrying = true;
       await new Promise((resolve) => this.timers.setTimeout(resolve, 50));
+      job.retrying = false;
       if (this.stopped) {
         job.reject(new CommandError(T.stopping));
         return;
@@ -194,8 +200,26 @@ export class Gateway {
       return;
     }
     if (current.kind === 'command' && this.queue.some((j) => j.kind === 'release')) {
+      // A pulse holding its connection runs the releases on it.
+      if (current.holding) {
+        current.wake?.();
+        return;
+      }
+      // A command that wrote nothing yet gives way at once (even one waiting
+      // on /data): its connection is cut, it can write nothing more.
+      if (!current.wrote) {
+        this.abort(current);
+        return;
+      }
       this.watchSilence();
     }
+  }
+
+  /** Drops a command that wrote nothing: the next job starts now. */
+  abort(job) {
+    job.aborted = true;
+    job.link?.cut();
+    if (this.current === job) this.current = undefined;
   }
 
   /** A command in the way of a release is cut once the gateway said nothing for 1 s. */
@@ -204,7 +228,7 @@ export class Gateway {
     const check = () => {
       this.watchTimer = undefined;
       const current = this.current;
-      if (this.stopped || !current || current.kind !== 'command') return;
+      if (this.stopped || !current || current.kind !== 'command' || current.holding) return;
       if (!this.queue.some((j) => j.kind === 'release')) return;
       if (current.link?.silentFor(this.app.timings.idleCut)) {
         current.link.cut();
@@ -213,6 +237,11 @@ export class Gateway {
       this.watchTimer = this.timers.setTimeout(check, 50);
     };
     this.watchTimer = this.timers.setTimeout(check, 50);
+  }
+
+  /** A release of that relay waiting or under way. */
+  releasing(relay) {
+    return [this.current, ...this.queue].some((j) => j?.kind === 'release' && j.relay === relay);
   }
 
   commandsWaiting() {
@@ -396,6 +425,7 @@ export class Gateway {
     const app = this.app;
     const relay = `${m}:${p}`;
     if (!app.config?.allowRelays) notSent(T.relaysOff);
+    if (app.stopping || app.stopped) notSent(T.stopping);
     if (app.storeState === 'unreadable') notSent(T.dataUnreadable);
     if (this.holds.has(relay) || app.releaseOwed(this.host.key, m, p)) notSent(T.relayHeld);
     if (this.queue.some((j) => j.relay === relay)) notSent(T.relayHeld);
@@ -407,7 +437,7 @@ export class Gateway {
         kind: 'command',
         relay,
         deadline,
-        run: (link) => this.runPulse(link, { m, p }, seq, deadline),
+        run: (link, job) => this.runPulse(link, job, { m, p }, seq, deadline),
       });
       this.lastCommand = text;
       return text;
@@ -441,7 +471,7 @@ export class Gateway {
     return error;
   }
 
-  async runPulse(link, port, seq, deadline) {
+  async runPulse(link, job, port, seq, deadline) {
     const app = this.app;
     const { m, p } = port;
     const relay = `${m}:${p}`;
@@ -488,13 +518,21 @@ export class Gateway {
         beforeSend: () => {
           if (!app.config?.allowRelays) notSent(T.relaysOff);
           if ((this.cancels.get(relay) ?? 0) !== seq) notSent(T.releasedMeanwhile);
-          if (this.stopped || app.stopped) notSent(T.stopping);
+          if (this.stopped || app.stopped || app.stopping) notSent(T.stopping);
+          if (job.aborted) notSent(T.preempted);
           if (this.mono() >= deadline - 200) notSent(T.noTime);
           wrote = true;
+          job.wrote = true;
           this.hold(m, p);
         },
       });
       app.publishRelay(this, m, p, 1);
+      if (identity.family === 'gc100') {
+        // A single connection: kept for the pulse, its release goes on it
+        // (another app may take the connection as soon as it is free).
+        job.resolve(T.pulseDone);
+        await this.holdOnLink(link, job, relay);
+      }
       return T.pulseDone;
     } catch (err) {
       if (!wrote) {
@@ -503,6 +541,36 @@ export class Gateway {
       }
       if (err?.kind === 'device') throw err;
       return T.pulseUnconfirmed;
+    }
+  }
+
+  /**
+   * The pulse job of a single-connection gateway, after its first byte:
+   * keeps the connection and runs on it every release that comes (its own
+   * at the end of the pulse, others meanwhile), until its own is done, the
+   * connection is lost or the integration leaves (the releases left then go
+   * the usual way, on a connection of their own).
+   */
+  async holdOnLink(link, job, relay) {
+    job.holding = true;
+    try {
+      for (;;) {
+        while (this.queue[0]?.kind === 'release' && !link.closed) {
+          const release = this.queue.shift();
+          release.link = link;
+          try {
+            release.resolve(await release.run(link, release));
+          } catch (err) {
+            release.reject(err);
+          }
+        }
+        if (link.closed || this.stopped) return;
+        if (!this.holds.has(relay) && !this.releasing(relay)) return;
+        await Promise.race([new Promise((resolve) => (job.wake = resolve)), link.closedPromise]);
+      }
+    } finally {
+      job.holding = false;
+      job.wake = undefined;
     }
   }
 
@@ -581,14 +649,14 @@ export class Gateway {
       return await this.enqueue({
         kind: 'command',
         deadline,
-        run: (link) => this.runIr(link, port, code, deadline),
+        run: (link, job) => this.runIr(link, job, port, code, deadline),
       });
     } catch (err) {
       throw this.commandFailure(err);
     }
   }
 
-  async runIr(link, port, code, deadline) {
+  async runIr(link, job, port, code, deadline) {
     const app = this.app;
     const { m, p } = port;
     const left = () => deadline - this.mono();
@@ -606,7 +674,8 @@ export class Gateway {
     const created = app.createdModel(this);
     if (!created) notSent(T.notCreated);
     if (identity.model !== created) notSent(T.otherDevice(identity.model, created));
-    if (!fitsFamily(identity.family, code)) notSent(T.ir.frequency);
+    const limit = familyLimit(identity.family, code);
+    if (limit) notSent(T.ir[limit]);
     const modules = await before(() => this.modules(link, undefined, timeout()));
     const mod = modules.find((x) => x.module === m);
     const flex = identity.family === 'flex';
@@ -623,14 +692,17 @@ export class Gateway {
       await link.ask(sendirLine(port, id, code), completeOf(port, id), {
         timeout: Math.max(1, Math.min(length + app.timings.irMargin, left())),
         beforeSend: () => {
-          if (this.stopped || app.stopped) notSent(T.stopping);
+          if (this.stopped || app.stopped || app.stopping) notSent(T.stopping);
+          if (job.aborted) notSent(T.preempted);
+          job.wrote = true;
         },
       });
       this.lastCommand = T.irDone;
       return { confirmed: true, text: T.irDone };
     } catch (err) {
       if (err?.kind === 'device') {
-        throw new CommandError(err.code === 'busy' ? T.irBusy : T.deviceRefused(err.code), {
+        const busy = err.code === 'busy' || err.code === 'IR008';
+        throw new CommandError(busy ? T.irBusy : T.deviceRefused(err.code), {
           sent: true,
         });
       }
@@ -654,15 +726,44 @@ export class Gateway {
     if (this.current?.kind === 'read') this.current.link?.cut();
   }
 
+  /**
+   * The integration leaves: no reading, no command any more; every relay
+   * held is released now, the releases waiting go first.
+   */
+  leaving() {
+    this.stopPolling();
+    for (const job of this.queue.filter((j) => j.kind !== 'release')) {
+      this.queue.splice(this.queue.indexOf(job), 1);
+      job.reject(new CommandError(T.stopping));
+    }
+    const current = this.current;
+    if (current?.kind === 'read') current.link?.cut();
+    if (current?.kind === 'command' && !current.wrote) this.abort(current);
+    for (const relay of [...this.holds.keys()]) {
+      const [m, p] = relay.split(':').map(Number);
+      this.release(m, p).catch(() => {});
+    }
+    current?.wake?.();
+  }
+
   stop() {
     this.stopped = true;
     this.stopPolling();
     this.timers.clearTimeout(this.watchTimer);
     for (const timer of this.holds.values()) this.timers.clearTimeout(timer);
     this.holds.clear();
-    for (const job of this.queue.splice(0)) job.reject(new CommandError(T.stopping));
-    // The job under way is answered now (a retry may be waiting on a timer).
+    for (const job of this.queue.splice(0)) {
+      // A release not sent in time stays owed (/data, next start).
+      if (job.kind === 'release') {
+        const [m, p] = job.relay.split(':').map(Number);
+        this.app.keepRelease(this.host, m, p);
+      }
+      job.reject(new CommandError(T.stopping));
+    }
+    // A command already written ends on its own outcome (sent, without
+    // confirmation); a retry waiting on a timer is answered now.
     this.current?.link?.cut();
-    this.current?.reject?.(new CommandError(T.stopping));
+    if (this.current?.retrying) this.current.reject(new CommandError(T.stopping));
+    this.current?.wake?.();
   }
 }

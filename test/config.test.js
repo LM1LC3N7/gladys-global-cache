@@ -16,11 +16,12 @@ test('addresses: IPv4 and names, port 4998 by default, no broadcast nor multicas
   });
   assert.equal(parseHost('192.168.1.70:4998').key, '192.168.1.70');
   assert.equal(parseHost('iTach.LAN:5000').id, 'itach-lan-5000');
+  // A host of a /16 to /23 network.
+  assert.equal(parseHost('10.0.1.255').key, '10.0.1.255');
+  assert.equal(parseHost('10.0.2.0').key, '10.0.2.0');
   for (const bad of [
     '0.0.0.0',
     '255.255.255.255',
-    '192.168.1.255',
-    '192.168.1.0',
     '224.0.0.1',
     '239.255.250.250',
     '192.168.1.70:0',

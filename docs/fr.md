@@ -38,15 +38,17 @@ paramètres de l’appareil, `ir_ports`) et le code. Formats acceptés :
 - une ligne `sendir` entière : `sendir,1:1,1,38000,1,1,342,171,21,21,...` (son connecteur sert si le
   champ est vide ; s’il diffère du champ, rien n’est envoyé) ;
 - la même sans le début : `38000,1,1,342,171,21,21,...` (fréquence, répétitions, décalage, durées) ;
-- un code Pronto appris (`0000 006D 0000 0022 ...`), converti par l’intégration.
+- un code Pronto appris (`0000 006D 0000 0022 ...`), converti par l’intégration (les autres sortes de
+  Pronto, `0100`, `5000`…, ne le sont pas).
 
 Le format compressé de Global Caché (avec des lettres) n’est pas pris en charge. Les codes se trouvent
 dans la base Control Tower de Global Caché ou s’apprennent avec l’outil iLearn.
 
-Avant d’envoyer, l’intégration vérifie le code d’après les bornes du manuel (fréquence de 15 000 à
-500 000 Hz, 20 000 au moins pour un GC-100 ; 1 à 20 répétitions ; durées de 1 à 50 000 ; durées par
-paires ; 512 durées au plus ; 5 s d’émission au plus, répétitions comprises), puis relit l’identité de
-la passerelle et le mode du port : un port réglé en capteur n’émet rien. L’action renvoie `confirmed`
+Avant d’envoyer, l’intégration vérifie le code d’après les bornes du manuel : fréquence de 15 000 à
+500 000 Hz (20 000 au moins pour un GC-100) ; 1 à 20 répétitions ; décalage impair, 383 au plus (255
+sur un GC-100) ; durées par paires, de 50 000 au plus, chacune de 80 µs au moins (et de 4 au moins sur
+Flex et Global Connect) ; 512 durées au plus ; 5 s d’émission au plus, répétitions comprises. Elle
+relit ensuite l’identité de la passerelle et le mode du port : un port réglé en capteur n’émet rien. L’action renvoie `confirmed`
 (fin d’émission confirmée par la passerelle). Sans cette confirmation, le code a pu partir : la scène
 continue et la variable vaut faux. Le bouton « Essayer un code infrarouge » de la configuration fait la
 même chose.
@@ -72,32 +74,43 @@ L’impulsion est refusée, sans rien envoyer au relais, dans ces cas :
 - l’option « Autoriser les relais » est décochée (elle est relue juste avant l’envoi) ;
 - `/data` est illisible, ou n’a pas pu garder le relâchement à venir (2 s au plus) ;
 - une impulsion de ce relais est en cours, ou son relâchement n’est pas encore confirmé ;
-- un relâchement de ce relais a été demandé pendant que l’impulsion attendait ;
+- un relâchement (de ce relais ou d’un autre de la passerelle) a été demandé avant le premier octet de
+  l’impulsion : il passe devant ;
 - la passerelle n’est pas encore créée dans Gladys, ou un autre modèle répond à son adresse ;
 - le port n’est plus un relais simple de la passerelle ;
 - le relais est lu fermé juste avant ;
 - la passerelle est injoignable, répond de façon inattendue ou trop lentement (Gladys attend 5 s) ;
 - 8 commandes attendent déjà pour cette passerelle ;
-- l’intégration s’arrête.
+- l’intégration s’arrête (dès le début de l’arrêt).
 
 Juste avant l’envoi, l’intégration relit sur la même connexion le modèle de la passerelle, ses modules
 et l’état du relais, puis écrit dans `/data` le relâchement à venir. Le relâchement part après la durée
 de l’impulsion, même si la passerelle n’a pas répondu à l’impulsion.
+
+Sur un GC-100, qui n’accepte qu’une connexion à la fois, l’impulsion garde sa connexion pendant sa
+durée et son relâchement part sur cette même connexion : une autre application ne peut pas la prendre
+entre les deux. Les autres commandes vers ce GC-100 attendent la fin de l’impulsion (un relâchement,
+lui, passe aussitôt sur la connexion gardée).
 
 ### Le relâchement
 
 Le relâchement (ouvrir le contact) ne dépend ni de l’option, ni de la
 configuration pas encore lue, ni d’une lecture ou d’une commande en cours ; il ne lui faut que l’adresse
 de la passerelle, que porte l’appareil. Il passe devant tout : il annule
-les impulsions de ce relais qui attendent, coupe tout de suite une lecture, et coupe une commande en
-cours si la passerelle n’a rien dit depuis 1 s. Il est confirmé par une lecture du relais faite après
+les impulsions de ce relais qui attendent, coupe tout de suite une lecture ou une commande qui n’a encore
+rien écrit, et coupe une commande déjà partie si la passerelle n’a rien dit depuis 1 s. Il est confirmé par une lecture du relais faite après
 lui.
 
-Il n’aboutit pas seulement si la passerelle ne répond pas (ou si l’intégration est en train de
-s’arrêter) : il est alors gardé dans `/data`, renvoyé
-par les 3 lectures suivantes qui réussissent et à chaque démarrage de l’intégration (avant même la
-lecture de la configuration), et le statut le signale. Un redémarrage pendant une impulsion relâche
-donc le relais au démarrage suivant.
+Il n’échoue que si la passerelle ne répond pas, ou si l’arrêt de l’intégration dépasse 2 s. Il est
+alors gardé dans `/data` et en mémoire, renvoyé sur une minuterie à lui (1 s, 2 s, 5 s, 10 s, 30 s,
+puis chaque minute, jusqu’à confirmation), à chaque lecture réussie de la passerelle et à chaque
+démarrage de l’intégration (avant même la lecture de la configuration) ; le statut le signale. Si
+`/data` est illisible, il est gardé en mémoire seulement (et renvoyé de même) : un redémarrage le
+perdrait, le statut le dit.
+
+À l’arrêt de l’intégration, plus aucune impulsion ne part ; chaque relais tenu, en cours d’impulsion ou
+dont le relâchement attend est relâché (2 s au plus). Un relâchement qui n’a pas pu partir reste dans
+`/data` et part au démarrage suivant.
 
 ## Statut
 

@@ -54,8 +54,10 @@ export const TIMINGS = Object.freeze({
   commandBudget: 3300,
   /** A relay release is tried again within this, then kept in /data. */
   releaseBudget: 250,
-  /** Readings that try a kept release again, at most. */
-  releaseReadTries: 3,
+  /** The own timer of an owed release: then every minute, without end. */
+  releaseRetry: [1000, 2000, 5000, 10_000, 30_000, 60_000],
+  /** Leaving: the releases still due are sent within this (real time). */
+  stopWindow: 2000,
   /** Closing an old connection before a new one, at most. */
   closeWait: 300,
   /** Margin given to an IR transmission on top of its own length. */

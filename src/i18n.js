@@ -57,13 +57,13 @@ export const T = {
     ),
   other: (key, model, created) =>
     t(
-      `${key} : ${model} répond à la place du ${created} créé dans Gladys ; commandes refusées, relancez une Découverte`,
-      `${key}: ${model} answers instead of the ${created} created in Gladys; commands refused, run a Discovery again`,
+      `${key} : ${model} répond à la place du ${created} créé dans Gladys ; commandes refusées, supprimez l’appareil puis relancez une Découverte`,
+      `${key}: ${model} answers instead of the ${created} created in Gladys; commands refused, delete the device then run a Discovery again`,
     ),
-  owed: (key, count) =>
+  owed: (key, count, memoryOnly) =>
     t(
-      `${key} : ${count} relâchement(s) de relais pas encore confirmé(s), le relais peut être resté fermé`,
-      `${key}: ${count} relay release(s) not confirmed yet, the relay may still be closed`,
+      `${key} : ${count} relâchement(s) de relais pas encore confirmé(s), le relais peut être resté fermé ; renvoyé(s) automatiquement${memoryOnly ? ' (/data illisible : gardé(s) en mémoire seulement, perdu(s) à un redémarrage)' : ''}`,
+      `${key}: ${count} relay release(s) not confirmed yet, the relay may still be closed; sent again automatically${memoryOnly ? ' (/data unreadable: kept in memory only, lost at a restart)' : ''}`,
     ),
   lastCommand: (text) => t(`dernière commande : ${text.fr}`, `last command: ${text.en}`),
   testNoHost: t('Aucune passerelle à tester.', 'No gateway to test.'),
@@ -124,12 +124,16 @@ export const T = {
     t(`Refusé par la passerelle (erreur ${code}).`, `Refused by the gateway (error ${code}).`),
   released: t('Relais relâché.', 'Relay released.'),
   releaseUnconfirmed: t(
-    'Relâchement envoyé sans confirmation : gardé dans /data et renvoyé aux prochaines lectures.',
-    'Release sent without confirmation: kept in /data and sent again by the next readings.',
+    'Relâchement envoyé sans confirmation : renvoyé dans 1 s, puis de plus en plus espacé (chaque minute au plus tard) jusqu’à confirmation.',
+    'Release sent without confirmation: sent again in 1 s, then less and less often (every minute at the latest) until confirmed.',
   ),
   releaseNotSent: t(
-    'Relâchement pas encore envoyé (passerelle injoignable) : gardé dans /data et renvoyé aux prochaines lectures.',
-    'Release not sent yet (gateway unreachable): kept in /data and sent again by the next readings.',
+    'Relâchement pas encore envoyé (passerelle injoignable) : renvoyé dans 1 s, puis de plus en plus espacé (chaque minute au plus tard) jusqu’à confirmation.',
+    'Release not sent yet (gateway unreachable): sent again in 1 s, then less and less often (every minute at the latest) until confirmed.',
+  ),
+  preempted: t(
+    'Un relâchement de relais passe devant : rien envoyé.',
+    'A relay release goes first: nothing sent.',
   ),
 
   // IR.
@@ -172,6 +176,10 @@ export const T = {
     ),
     connector: t('Connecteur du code sendir invalide.', 'Invalid connector in the sendir code.'),
     pronto: t('Code Pronto incohérent.', 'Inconsistent Pronto code.'),
+    prontoKind: t(
+      'Seuls les codes Pronto appris (commençant par 0000) sont pris en charge.',
+      'Only learned Pronto codes (starting with 0000) are supported.',
+    ),
     frequency: t(
       'Fréquence hors de 15 000 à 500 000 Hz (20 000 au moins pour un GC-100).',
       'Frequency outside 15,000 to 500,000 Hz (20,000 at least for a GC-100).',
@@ -184,10 +192,13 @@ export const T = {
       'Les durées doivent aller par paires (allumé, éteint).',
       'Durations must come in pairs (on, off).',
     ),
-    pulse: t('Durée d’impulsion hors de 1 à 50 000.', 'Pulse count outside 1 to 50,000.'),
+    pulse: t(
+      'Durée hors bornes : 80 µs au moins (4 au moins sur Flex et Global Connect), 50 000 au plus.',
+      'Duration out of bounds: 80 µs at least (4 at least on Flex and Global Connect), 50,000 at most.',
+    ),
     offset: t(
-      'Décalage de répétition invalide (impair, dans le code).',
-      'Invalid repeat offset (odd, within the code).',
+      'Décalage de répétition invalide (impair, dans le code, 383 au plus, 255 sur un GC-100).',
+      'Invalid repeat offset (odd, within the code, 383 at most, 255 on a GC-100).',
     ),
     tooLongToSend: t(
       `Émission de plus de ${LIMITS.irMaxMs / 1000} s (répétitions comprises) refusée.`,
