@@ -73,3 +73,7 @@
 - Compressed GC IR format; a library of named codes in the configuration.
 - Flex: `setstate,<m>:<p>,1,<period>` (documented) would add a release on the gateway side.
 - Mutation check of the guards: `memcap node scripts/mutants.mjs` (scripts/mutants.json).
+
+## Next patch
+
+- Review minors: see `_lots/lot25/reviews/global-cache-r3.md` (tests pour N4 relâchement en file gardé par gateway.stop() et P3 abort() qui attend la fermeture).
