@@ -1,6 +1,6 @@
 {
   "name": "gladys-global-cache",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Gladys Assistant external integration for Global Caché iTach, Flex and GC-100 gateways (IR codes from scenes, relays, sensor inputs), over their local Unified TCP API. Unofficial, not affiliated with Global Caché.",
   "type": "module",

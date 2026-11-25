@@ -10,6 +10,8 @@ the notes of the version's GitHub Release.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-25
+
 ### Added
 
 - Global Caché gateways (iTach, Flex, GC-100, Global Connect) over the local
@@ -21,3 +23,6 @@ the notes of the version's GitHub Release.
   is released at the next start (kept in `/data`).
 - Sensor inputs, read at the configured interval.
 - French and English documentation.
+
+[Unreleased]: https://github.com/LM1LC3N7/gladys-global-cache/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/LM1LC3N7/gladys-global-cache/releases/tag/v0.1.1
