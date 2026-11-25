@@ -85,7 +85,9 @@ pulse length, even if the gateway did not answer the pulse.
 
 On a GC-100, which accepts a single connection at a time, the pulse keeps its connection for its length
 and its release goes on that same connection: no other app can take it in between. The other commands
-to that GC-100 wait for the end of the pulse (a release goes at once on the kept connection).
+to that GC-100 wait for the end of the pulse, but not beyond their own delay (3.3 s for a pulse, 12 s
+for an infrared code): they are then refused with nothing sent. A release goes at once on the kept
+connection.
 
 ### The release
 

@@ -547,3 +547,69 @@ test('a successful reading sends an owed release at once (its own timer far away
   await s.advanceUntil(() => s.app.owed.size === 0, { ms: 5000, every: 50 });
   assert.equal(s.fake.state.relays.get('1:1'), 0);
 });
+
+test('a pulse marked given way before its first byte never leaves (beforeSend reads it)', async (t) => {
+  const s = await ready(t);
+  s.fake.hooks.push((line) => {
+    if (line === 'getstate,1:1') s.app.gateways.values().next().value.current.aborted = true;
+    return undefined;
+  });
+  const ack = await press(s.gladys, s.fake.host, PULSE);
+  assert.match(ack.error, /passe devant/);
+  assert.equal(sent(s.fake, 'setstate'), 0);
+});
+
+test('a command given way during its reconnection wait never opens a second connection', async (t) => {
+  const s = await ready(t, { model: 'GC100' });
+  const g = s.app.gateways.values().next().value;
+  // Another app holds the single connection (once the reading has freed it): the
+  // pulse is refused and waits to retry.
+  await until(() => s.fake.open === 0);
+  const other = net.connect({ host: '127.0.0.1', port: s.fake.port });
+  other.on('error', () => {});
+  await until(() => s.fake.open === 1 && s.fake.connections === 2);
+  const pulse = press(s.gladys, s.fake.host, 'relay-3-1-pulse');
+  await until(() => g.current?.retrying);
+  other.destroy();
+  await until(() => s.fake.open === 0);
+  const before = s.fake.connections;
+  const refused = s.fake.refused;
+  const release = press(s.gladys, s.fake.host, 'relay-3-2-release');
+  await s.advanceUntil(() => !g.busy, { ms: 2000, every: 50 });
+  assert.equal((await release).success, true);
+  assert.match((await pulse).error, /passe devant/);
+  // One connection: the release's own.
+  assert.equal(s.fake.connections - before, 1);
+  assert.equal(s.fake.refused, refused);
+  assert.equal(sent(s.fake, 'setstate,3:1,1'), 0);
+});
+
+test('GC-100 held by a 10 s pulse: another pulse is refused at its deadline, not at the end', async (t) => {
+  const s = await ready(t, { model: 'GC100', config: { pulse_ms: 10_000 } });
+  const first = press(s.gladys, s.fake.host, 'relay-3-1-pulse');
+  await s.advanceUntil(() => s.fake.state.relays.get('3:1') === 1, { ms: 1000, every: 50 });
+  assert.equal((await first).success, true);
+  const second = press(s.gladys, s.fake.host, 'relay-3-2-pulse');
+  await s.step(3400);
+  const ack = await within(second, 2000, 'second pulse');
+  assert.match(ack.error, /occupée trop longtemps/);
+  assert.equal(s.fake.state.relays.get('3:1'), 1, 'answered while the first pulse still holds');
+  await s.step(7000);
+  await until(() => s.fake.state.relays.get('3:1') === 0);
+  assert.equal(sent(s.fake, 'setstate,3:2,1'), 0);
+});
+
+test('stopping: a manual release that could not leave reaches /data before stop() ends', async (t) => {
+  const s = await ready(t);
+  s.fake.silent = true;
+  const save = s.store.save.bind(s.store);
+  s.store.save = async (data) => {
+    await sleep(150);
+    return save(data);
+  };
+  const pending = press(s.gladys, s.fake.host, 'relay-1-2-release');
+  await until(() => s.app.gateways.values().next().value.current?.kind === 'release');
+  await within(s.app.stop(), 5000, 'stop');
+  assert.ok(Object.keys(s.store.data.releases).includes(releaseKey(s.fake.host, 1, 2)));
+  await pending;
+});

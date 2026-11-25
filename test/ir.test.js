@@ -154,3 +154,17 @@ test('stopping while a code transmits: said sent without confirmation, not "noth
   assert.equal(ack.success, true, ack.error);
   assert.deepEqual(ack.data.outputs, { confirmed: false });
 });
+
+test('a port in another mode than IR output (receiver): nothing sent; given way before sendir: nothing sent', async (t) => {
+  const s = await ready(t);
+  s.fake.state.ir['1:3'] = 'RECEIVER';
+  let ack = await scene(s, { connector: '1:3', code: CODE });
+  assert.match(ack.error, /réglé en RECEIVER/);
+  s.fake.hooks.push((line) => {
+    if (line === 'get_IR,1:1') s.app.gateways.values().next().value.current.aborted = true;
+    return undefined;
+  });
+  ack = await scene(s, { connector: '1:1', code: CODE });
+  assert.match(ack.error, /passe devant/);
+  assert.equal(s.fake.requests('sendir').length, 0);
+});

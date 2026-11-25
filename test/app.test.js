@@ -7,6 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import net from 'node:net';
 import { RateLimiter } from '../src/events.js';
+import { startOnConnect } from '../src/handlers.js';
 import { startFakeGc } from './helpers/fakeGc.js';
 import { D, DEAD_PORT, F, createAll, press, setup, until, within } from './helpers/app.js';
 
@@ -254,4 +255,25 @@ test('two quick reconnections: the configuration of the latest one wins', async 
     s.app.config.hosts.map((h) => h.key),
     [s.fake.host],
   );
+});
+
+test('startOnConnect: a configuration read for an older connection is never applied', async () => {
+  const started = [];
+  let late;
+  let calls = 0;
+  const gladys = {
+    getConfig: () => {
+      calls += 1;
+      if (calls === 1) return new Promise((resolve) => (late = resolve));
+      return Promise.resolve({ gateways: 'new' });
+    },
+    setConnectionStatus: async () => {},
+  };
+  const app = { start: async (config) => started.push(config.gateways) };
+  const onConnected = startOnConnect(gladys, app, undefined);
+  const first = onConnected();
+  await onConnected();
+  late({ gateways: 'old' });
+  await first;
+  assert.deepEqual(started, ['new']);
 });

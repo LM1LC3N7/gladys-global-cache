@@ -65,9 +65,10 @@ try {
       filter: (src) => !['.git', 'node_modules'].includes(basename(src)),
     });
     cpSync(join(REPO, 'node_modules'), join(dir, 'node_modules'), { recursive: true });
-    const { code } = await run(dir);
+    const { code, out } = await run(dir);
     rmSync(dir, { recursive: true, force: true });
     if (code !== 0) {
+      console.log(out.split('\n').slice(-60).join('\n'));
       console.log('baseline FAILED');
       rmSync(base, { recursive: true, force: true });
       process.exit(1);

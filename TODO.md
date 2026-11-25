@@ -38,7 +38,8 @@
   before the configuration is read). Review r1 (B2, B3).
 - GC-100 (single connection, review r1 B3): the pulse job keeps its connection for the pulse length
   (the ack is given at the first answer) and runs every release that comes on it, its own at the end;
-  other commands and readings to that GC-100 wait for the end of the pulse (10 s at most). Other product
+  other commands and readings to that GC-100 wait for the end of the pulse, a command no longer
+  than its own deadline (refused at it, nothing sent; review r2). Other product
   lines serve 8 connections: their release opens one of its own.
 - Stop (review r1 B1): `stopping` set at once, checked before the first byte of a pulse or an IR code;
   readings and waiting commands dropped, a command that wrote nothing dropped, every relay held

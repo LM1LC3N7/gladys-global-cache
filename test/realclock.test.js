@@ -80,3 +80,51 @@ test('real clock: a pulse closes the contact for its length (500 ms), then opens
   const length = off.at - on.at;
   assert.ok(length >= 480 && length <= 3000, `${length} ms`);
 });
+
+test('real clock: a silent gateway owing a release arms no 1 ms loop, no timeout warning', async (t) => {
+  const fake = await startFakeGc('IP2CC');
+  const timers = [];
+  const real = {
+    setTimeout: (fn, ms) => {
+      timers.push(ms);
+      return setTimeout(fn, ms);
+    },
+    clearTimeout: (id) => clearTimeout(id),
+  };
+  const warnings = [];
+  const onWarning = (w) => warnings.push(w.name);
+  process.on('warning', onWarning);
+  const gladys = createFakeGladys({
+    selector: 'global-cache',
+    config: { gateways: fake.host, allow_relays: true, poll_interval: 3600 },
+  });
+  const quiet = () => {};
+  const logger = { info: quiet, warn: quiet, error: quiet, debug: quiet };
+  const app = new GlobalCacheApp({ gladys, logger, store: new MemoryStore(), timers: real });
+  registerHandlers(gladys, app, logger, real);
+  let retries = 0;
+  const original = app.runRetries.bind(app);
+  app.runRetries = () => {
+    retries += 1;
+    return original();
+  };
+  t.after(async () => {
+    process.off('warning', onWarning);
+    await app.stop();
+    await fake.close();
+  });
+  await gladys.connect();
+  await createAll(gladys);
+  fake.silent = true;
+  const ack = await press(gladys, fake.host, 'relay-1-1-release');
+  assert.equal(ack.success, false);
+  // 1.5 s timeout, then tries at +1 s and +2 s, each 1.5 s long.
+  await new Promise((resolve) => setTimeout(resolve, 5000));
+  // A few runs (the 1 ms loop made thousands); margin for a loaded machine.
+  assert.ok(retries <= 10, `${retries} runs of the retry timer`);
+  assert.ok(
+    timers.every((ms) => Number.isFinite(ms)),
+    'every timer finite',
+  );
+  assert.deepEqual(warnings, []);
+});

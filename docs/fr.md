@@ -89,8 +89,9 @@ de l’impulsion, même si la passerelle n’a pas répondu à l’impulsion.
 
 Sur un GC-100, qui n’accepte qu’une connexion à la fois, l’impulsion garde sa connexion pendant sa
 durée et son relâchement part sur cette même connexion : une autre application ne peut pas la prendre
-entre les deux. Les autres commandes vers ce GC-100 attendent la fin de l’impulsion (un relâchement,
-lui, passe aussitôt sur la connexion gardée).
+entre les deux. Les autres commandes vers ce GC-100 attendent la fin de l’impulsion, mais pas au-delà de
+leur délai (3,3 s pour une impulsion, 12 s pour un code infrarouge) : elles sont alors refusées sans
+rien envoyer. Un relâchement, lui, passe aussitôt sur la connexion gardée.
 
 ### Le relâchement
 

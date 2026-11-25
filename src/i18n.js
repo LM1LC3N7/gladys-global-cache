@@ -115,6 +115,10 @@ export const T = {
     'Réponse inattendue de la passerelle, rien envoyé.',
     'Unexpected answer from the gateway, nothing sent.',
   ),
+  waitedTooLong: t(
+    'Passerelle occupée trop longtemps (impulsion en cours sur un GC-100 ?), rien envoyé.',
+    'Gateway busy for too long (a pulse under way on a GC-100?), nothing sent.',
+  ),
   pulseDone: t('Impulsion faite.', 'Pulse done.'),
   pulseUnconfirmed: t(
     'Impulsion envoyée, sans confirmation ; le relâchement suit.',

@@ -113,6 +113,18 @@ export class Gateway {
       job.reject(new CommandError(T.stopping));
       return job.promise;
     }
+    if (job.deadline !== undefined) {
+      // Waiting past its deadline (a GC-100 held by a pulse): answered at once.
+      job.expiry = this.timers.setTimeout(
+        () => {
+          const index = this.queue.indexOf(job);
+          if (index === -1) return;
+          this.queue.splice(index, 1);
+          job.reject(new CommandError(T.waitedTooLong));
+        },
+        Math.max(0, job.deadline - this.mono()),
+      );
+    }
     if (front) {
       // Behind the releases already waiting, ahead of everything else.
       const index = this.queue.findIndex((j) => j.kind !== 'release');
@@ -133,6 +145,7 @@ export class Gateway {
       return;
     }
     this.current = job;
+    this.timers.clearTimeout(job.expiry);
     this.run(job).finally(() => {
       if (this.current === job) this.current = undefined;
       this.kick();
@@ -188,6 +201,11 @@ export class Gateway {
         job.reject(new CommandError(T.stopping));
         return;
       }
+      // Given way to a release meanwhile: no second connection.
+      if (job.aborted) {
+        job.reject(new CommandError(T.preempted));
+        return;
+      }
     }
   }
 
@@ -219,7 +237,14 @@ export class Gateway {
   abort(job) {
     job.aborted = true;
     job.link?.cut();
-    if (this.current === job) this.current = undefined;
+    // The next job opens once that connection is closed (a GC-100 serves one).
+    const free = () => {
+      if (this.current !== job) return;
+      this.current = undefined;
+      this.kick();
+    };
+    if (!job.link || job.retrying) free();
+    else job.link.closedPromise.then(free);
   }
 
   /** A command in the way of a release is cut once the gateway said nothing for 1 s. */
@@ -753,12 +778,17 @@ export class Gateway {
     for (const timer of this.holds.values()) this.timers.clearTimeout(timer);
     this.holds.clear();
     for (const job of this.queue.splice(0)) {
+      this.timers.clearTimeout(job.expiry);
       // A release not sent in time stays owed (/data, next start).
       if (job.kind === 'release') {
         const [m, p] = job.relay.split(':').map(Number);
         this.app.keepRelease(this.host, m, p);
       }
       job.reject(new CommandError(T.stopping));
+    }
+    if (this.current?.kind === 'release') {
+      const [m, p] = this.current.relay.split(':').map(Number);
+      this.app.keepRelease(this.host, m, p);
     }
     // A command already written ends on its own outcome (sent, without
     // confirmation); a retry waiting on a timer is answered now.

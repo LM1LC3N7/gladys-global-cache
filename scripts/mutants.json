@@ -266,8 +266,8 @@
   {
     "name": "/data: unreadable overwritten",
     "file": "src/app.js",
-    "from": "    if (this.storeState === 'unreadable' || !this.data) return;\n    Promise.resolve",
-    "to": "    if (!this.data) return;\n    Promise.resolve"
+    "from": "    if (this.storeState === 'unreadable' || !this.data) return;\n    this.lastSave",
+    "to": "    if (!this.data) return;\n    this.lastSave"
   },
   {
     "name": "/data: not read again",
@@ -322,5 +322,53 @@
     "file": "src/gateway.js",
     "from": "    if (this.current?.retrying) this.current.reject(new CommandError(T.stopping));",
     "to": "    this.current?.reject?.(new CommandError(T.stopping));"
+  },
+  {
+    "name": "retry timer armed on Infinity",
+    "file": "src/app.js",
+    "from": ".map((r) => r.due).filter(Number.isFinite);",
+    "to": ".map((r) => r.due);"
+  },
+  {
+    "name": "aborted job reconnects after its wait",
+    "file": "src/gateway.js",
+    "from": "      if (job.aborted) {\n        job.reject(new CommandError(T.preempted));\n        return;\n      }",
+    "to": ""
+  },
+  {
+    "name": "pulse: given way not read in beforeSend",
+    "file": "src/gateway.js",
+    "from": "          if (job.aborted) notSent(T.preempted);\n          if (this.mono() >= deadline - 200)",
+    "to": "          if (this.mono() >= deadline - 200)"
+  },
+  {
+    "name": "IR: given way not read in beforeSend",
+    "file": "src/gateway.js",
+    "from": "          if (job.aborted) notSent(T.preempted);\n          job.wrote = true;\n        },",
+    "to": "          job.wrote = true;\n        },"
+  },
+  {
+    "name": "queue: no deadline while waiting",
+    "file": "src/gateway.js",
+    "from": "    if (job.deadline !== undefined) {\n      // Waiting past",
+    "to": "    if (false) {\n      // Waiting past"
+  },
+  {
+    "name": "stop: /data write not awaited",
+    "file": "src/app.js",
+    "from": "await Promise.race([this.lastSave, new Promise",
+    "to": "await Promise.race([undefined, new Promise"
+  },
+  {
+    "name": "stop: release under way not kept",
+    "file": "src/gateway.js",
+    "from": "    if (this.current?.kind === 'release') {\n      const [m, p] = this.current.relay.split(':').map(Number);\n      this.app.keepRelease(this.host, m, p);\n    }\n",
+    "to": ""
+  },
+  {
+    "name": "IR: other mode than IR accepted",
+    "file": "src/gateway.js",
+    "from": "if (mode && !EMITTING.has(mode)) notSent(T.irMode(mode));",
+    "to": "if (mode && SENSING.has(mode)) notSent(T.irMode(mode));"
   }
 ]

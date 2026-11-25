@@ -245,6 +245,8 @@ export class GlobalCacheApp {
     this.dataTimer = undefined;
     for (const gateway of this.gateways.values()) gateway.stop();
     this.gateways.clear();
+    // The releases left owed reach /data before leaving (1 s real time at most).
+    await Promise.race([this.lastSave, new Promise((resolve) => setTimeout(resolve, 1000))]);
   }
 
   // --- releases kept in /data ------------------------------------------------------
@@ -306,8 +308,11 @@ export class GlobalCacheApp {
   armRetryTimer() {
     this.timers.clearTimeout(this.retryTimer);
     this.retryTimer = undefined;
-    if (this.stopped || this.stopping || !this.retries.size) return;
-    const next = Math.min(...[...this.retries.values()].map((r) => r.due));
+    if (this.stopped || this.stopping) return;
+    // Only finite deadlines: a release being tried (Infinity) waits for its outcome.
+    const dues = [...this.retries.values()].map((r) => r.due).filter(Number.isFinite);
+    if (!dues.length) return;
+    const next = Math.min(...dues);
     this.retryTimer = this.timers.setTimeout(
       () => this.runRetries(),
       Math.max(0, next - this.monotonic()),
@@ -362,7 +367,7 @@ export class GlobalCacheApp {
   /** Never awaited: a slow disk holds nothing. An unreadable file is never overwritten. */
   persist() {
     if (this.storeState === 'unreadable' || !this.data) return;
-    Promise.resolve(this.store.save(this.snapshot())).then(
+    this.lastSave = Promise.resolve(this.store.save(this.snapshot())).then(
       (ok) => {
         if (ok === false) this.logger.warn('/data could not be written');
       },
