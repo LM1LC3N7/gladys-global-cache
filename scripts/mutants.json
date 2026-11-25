@@ -1,0 +1,230 @@
+[
+  {
+    "name": "pulse(): option check removed",
+    "file": "src/gateway.js",
+    "from": "    if (!app.config?.allowRelays) notSent(T.relaysOff);\n    if (app.storeState === 'unreadable')",
+    "to": "    if (app.storeState === 'unreadable')"
+  },
+  {
+    "name": "beforeSend: option check removed",
+    "file": "src/gateway.js",
+    "from": "          if (!app.config?.allowRelays) notSent(T.relaysOff);\n          if ((this.cancels",
+    "to": "          if ((this.cancels"
+  },
+  {
+    "name": "beforeSend: release meanwhile ignored",
+    "file": "src/gateway.js",
+    "from": "if ((this.cancels.get(relay) ?? 0) !== seq) notSent(T.releasedMeanwhile);",
+    "to": ""
+  },
+  {
+    "name": "beforeSend: deadline ignored",
+    "file": "src/gateway.js",
+    "from": "if (this.mono() >= deadline - 200) notSent(T.noTime);",
+    "to": ""
+  },
+  {
+    "name": "pulse: /data not written ignored",
+    "file": "src/gateway.js",
+    "from": "if (!kept) notSent(T.dataNotKept);",
+    "to": ""
+  },
+  {
+    "name": "pulse: /data unreadable ignored",
+    "file": "src/gateway.js",
+    "from": "if (app.storeState === 'unreadable') notSent(T.dataUnreadable);",
+    "to": ""
+  },
+  {
+    "name": "pulse: relay read closed ignored",
+    "file": "src/gateway.js",
+    "from": "if (readState(lines) !== 0) notSent(T.relayClosed);",
+    "to": ""
+  },
+  {
+    "name": "pulse: identity ignored",
+    "file": "src/gateway.js",
+    "from": "    if (identity.model !== created) notSent(T.otherDevice(identity.model, created));\n    const modules = await unsent(",
+    "to": "    const modules = await unsent("
+  },
+  {
+    "name": "pulse: not a relay ignored",
+    "file": "src/gateway.js",
+    "from": "if (!isRelay) notSent(T.notRelay);",
+    "to": ""
+  },
+  {
+    "name": "pulse: held relay pressed again",
+    "file": "src/gateway.js",
+    "from": "if (this.holds.has(relay) || app.releaseOwed(this.host.key, m, p)) notSent(T.relayHeld);",
+    "to": ""
+  },
+  {
+    "name": "pulse: no release timer",
+    "file": "src/gateway.js",
+    "from": "          wrote = true;\n          this.hold(m, p);",
+    "to": "          wrote = true;"
+  },
+  {
+    "name": "pulse not sent: /data guard left",
+    "file": "src/gateway.js",
+    "from": "        app.dropRelease(this.host.key, m, p);\n        throw err;",
+    "to": "        throw err;"
+  },
+  {
+    "name": "release: queued pulses not cancelled",
+    "file": "src/gateway.js",
+    "from": "      this.queue.splice(this.queue.indexOf(job), 1);\n      job.reject(new CommandError(T.releasedMeanwhile));",
+    "to": "      job.reject(new CommandError(T.releasedMeanwhile));"
+  },
+  {
+    "name": "release: not ahead of the queue",
+    "file": "src/gateway.js",
+    "from": "          { front: true },",
+    "to": "          { front: false },"
+  },
+  {
+    "name": "release: a reading not cut",
+    "file": "src/gateway.js",
+    "from": "    if (current.kind === 'read') {\n      current.link?.cut();\n      return;",
+    "to": "    if (current.kind === 'read') {\n      return;"
+  },
+  {
+    "name": "release: a silent command never cut",
+    "file": "src/gateway.js",
+    "from": "      if (current.link?.silentFor(this.app.timings.idleCut)) {",
+    "to": "      if (false) {"
+  },
+  {
+    "name": "release: a silent command cut at once",
+    "file": "src/gateway.js",
+    "from": "current.link?.silentFor(this.app.timings.idleCut)",
+    "to": "current.link?.silentFor(0)"
+  },
+  {
+    "name": "release: confirmed by its echo only",
+    "file": "src/gateway.js",
+    "from": "    if (value !== 0) throw new LinkError('timeout', { sent: true });",
+    "to": ""
+  },
+  {
+    "name": "release: not kept when it fails",
+    "file": "src/gateway.js",
+    "from": "    this.app.keepRelease(this.host, m, p);\n    this.lastCommand",
+    "to": "    this.lastCommand"
+  },
+  {
+    "name": "boot: kept releases not sent",
+    "file": "src/app.js",
+    "from": "    await this.loadData();\n    this.sendKeptReleases();",
+    "to": "    await this.loadData();"
+  },
+  {
+    "name": "readings: kept releases not sent again",
+    "file": "src/gateway.js",
+    "from": "    this.app.retryReleases(this);",
+    "to": ""
+  },
+  {
+    "name": "readings: kept releases sent again without end",
+    "file": "src/app.js",
+    "from": "if (tries >= this.timings.releaseReadTries) continue;",
+    "to": ""
+  },
+  {
+    "name": "stop: held relays not released",
+    "file": "src/app.js",
+    "from": "    if (held.length) {",
+    "to": "    if (false) {"
+  },
+  {
+    "name": "queue: no limit",
+    "file": "src/gateway.js",
+    "from": "    if (this.commandsWaiting() >= LIMITS.queue) notSent(T.busy);\n    const deadline = received + app.timings.commandBudget;",
+    "to": "    const deadline = received + app.timings.commandBudget;"
+  },
+  {
+    "name": "IR: port mode ignored",
+    "file": "src/gateway.js",
+    "from": "if (mode && !EMITTING.has(mode)) notSent(T.irMode(mode));",
+    "to": ""
+  },
+  {
+    "name": "IR: GC-100 frequency ignored",
+    "file": "src/gateway.js",
+    "from": "if (!fitsFamily(identity.family, code)) notSent(T.ir.frequency);",
+    "to": ""
+  },
+  {
+    "name": "IR: repeat bound",
+    "file": "src/protocol.js",
+    "from": "repeat > LIMITS.irRepeat",
+    "to": "repeat > 99"
+  },
+  {
+    "name": "IR: length bound",
+    "file": "src/protocol.js",
+    "from": "if (irDuration(code) > LIMITS.irMaxMs)",
+    "to": "if (false)"
+  },
+  {
+    "name": "IR: compressed accepted as format error",
+    "file": "src/protocol.js",
+    "from": "if (/[A-Z]/i.test(rest)) return { ok: false, reason: 'compressed' };",
+    "to": ""
+  },
+  {
+    "name": "link: long line not cut",
+    "file": "src/link.js",
+    "from": "if (this.buffer.length > LIMITS.line || parts.some((l) => l.length > LIMITS.line)) {",
+    "to": "if (false) {"
+  },
+  {
+    "name": "link: answer of another value taken",
+    "file": "src/link.js",
+    "from": "    if (want !== undefined && Number(match[3]) !== want) return 'ignore';",
+    "to": ""
+  },
+  {
+    "name": "link: answer of another port taken",
+    "file": "src/link.js",
+    "from": "if (!match || Number(match[1]) !== m || Number(match[2]) !== p) return 'ignore';",
+    "to": "if (!match) return 'ignore';"
+  },
+  {
+    "name": "readings: another model published",
+    "file": "src/gateway.js",
+    "from": "created && created !== info.model ? 'other' : 'ok'",
+    "to": "'ok'"
+  },
+  {
+    "name": "readings: doubled",
+    "file": "src/gateway.js",
+    "from": "    if (pending) return pending.outcome;",
+    "to": ""
+  },
+  {
+    "name": "test button: no gap",
+    "file": "src/app.js",
+    "from": "this.monotonic() - g.lastRead < this.timings.testGap",
+    "to": "this.monotonic() - g.lastRead < 0"
+  },
+  {
+    "name": "states: published unchanged",
+    "file": "src/app.js",
+    "from": "if (!ids.has(id) || this.published.get(id) === s.value) continue;",
+    "to": "if (!ids.has(id)) continue;"
+  },
+  {
+    "name": "connected: published values kept",
+    "file": "src/app.js",
+    "from": "    this.published.clear();\n    this.gladys.forgetPublishedStates?.();",
+    "to": ""
+  },
+  {
+    "name": "config: relays on by default",
+    "file": "src/config.js",
+    "from": "allowRelays: bool(config.allow_relays),",
+    "to": "allowRelays: config.allow_relays !== false,"
+  }
+]

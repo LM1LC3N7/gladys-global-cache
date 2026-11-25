@@ -1,147 +1,153 @@
 {
   "manifest_version": 1,
   "type": "device",
-  "name": "Demo Devices Template",
+  "name": "Global Caché",
   "description": {
-    "en": "Starter template showing sensors, a switch, a dimmable light and a smart plug.",
-    "fr": "Template de démarrage : capteurs, interrupteur, lampe variable et prise connectée."
+    "en": "Global Caché iTach, Flex, GC-100 gateways: IR codes from scenes, relays, inputs.",
+    "fr": "Passerelles Global Caché iTach, Flex, GC-100 : codes IR en scène, relais, entrées."
   },
-  "version": "1.0.0",
-  "docker_image": "ghcr.io/gladysassistant/integration-template-js:1.0.0",
+  "version": "0.1.0",
+  "docker_image": "ghcr.io/lm1lc3n7/gladys-global-cache:0.1.0",
   "gladys_version": ">=5.1.0",
-  "cover_image": "https://raw.githubusercontent.com/GladysAssistant/integration-template-js/master/cover.png",
-  "categories": ["lighting", "security", "environment"],
-  "transports": ["local", "cloud"],
+  "cover_image": "https://raw.githubusercontent.com/LM1LC3N7/gladys-global-cache/main/cover.png",
+  "categories": ["multimedia", "protocols", "lighting"],
+  "transports": ["local"],
   "config_schema": [
     {
       "key": "intro",
       "type": "section",
-      "label": { "en": "Getting started", "fr": "Pour commencer" },
+      "label": { "en": "Global Caché gateways", "fr": "Passerelles Global Caché" },
       "description": {
-        "en": "The demo weather station reads real data from the free Open-Meteo API: pick the coordinates to observe. No account, no API key.",
-        "fr": "La station météo de démonstration lit de vraies données via l'API gratuite Open-Meteo : choisissez les coordonnées à observer. Pas de compte, pas de clé d'API."
+        "en": "The integration talks to the gateways on your network through the Global Caché Unified TCP API (port 4998), without any account. Give each gateway a fixed address (DHCP reservation): the address is its identity in Gladys. Then run a Discovery and add the gateways. IR codes are sent from scenes (action \"Send an infrared code\").",
+        "fr": "L’intégration parle aux passerelles de votre réseau par l’API TCP unifiée de Global Caché (port 4998), sans compte. Donnez à chaque passerelle une adresse fixe (réservation DHCP) : l’adresse est son identité dans Gladys. Lancez ensuite une Découverte et ajoutez les passerelles. Les codes infrarouges s’envoient depuis les scènes (action « Émettre un code infrarouge »)."
       },
       "links": [
         {
-          "url": "https://open-meteo.com/en/docs",
-          "label": { "en": "Open-Meteo documentation", "fr": "Documentation Open-Meteo" }
+          "url": "https://www.globalcache.com/library/unified-api/",
+          "label": { "en": "Global Caché Unified TCP API", "fr": "API TCP unifiée de Global Caché" }
         }
       ]
     },
     {
-      "key": "latitude",
-      "type": "number",
-      "label": { "en": "Latitude", "fr": "Latitude" },
+      "key": "gateways",
+      "type": "string",
+      "label": { "en": "Gateway addresses", "fr": "Adresses des passerelles" },
       "description": {
-        "en": "Latitude used for the demo weather sensor.",
-        "fr": "Latitude utilisée par le capteur météo de démonstration."
+        "en": "IP addresses or host names, separated by commas (8 at most); add \":port\" only if it is not 4998.",
+        "fr": "Adresses IP ou noms d’hôte, séparés par des virgules (8 au plus) ; ajoutez « :port » seulement s’il n’est pas 4998."
       },
-      "placeholder": { "en": "e.g. 48.8566", "fr": "ex. 48.8566" },
-      "required": true,
-      "default": 48.8566,
-      "min": -90,
-      "max": 90
-    },
-    {
-      "key": "longitude",
-      "type": "number",
-      "label": { "en": "Longitude", "fr": "Longitude" },
-      "description": {
-        "en": "Longitude used for the demo weather sensor.",
-        "fr": "Longitude utilisée par le capteur météo de démonstration."
+      "placeholder": {
+        "en": "e.g. 192.168.1.70, 192.168.1.71",
+        "fr": "ex. 192.168.1.70, 192.168.1.71"
       },
-      "placeholder": { "en": "e.g. 2.3522", "fr": "ex. 2.3522" },
-      "required": true,
-      "default": 2.3522,
-      "min": -180,
-      "max": 180
+      "required": true
     },
     {
-      "key": "unit",
-      "type": "select",
-      "label": { "en": "Temperature unit", "fr": "Unité de température" },
-      "required": false,
-      "default": "celsius",
-      "options": [
-        { "value": "celsius", "label": { "en": "Celsius", "fr": "Celsius" } },
-        { "value": "fahrenheit", "label": { "en": "Fahrenheit", "fr": "Fahrenheit" } }
-      ]
-    },
-    {
-      "key": "poll_frequency",
+      "key": "poll_interval",
       "type": "number",
-      "label": { "en": "Refresh interval (s)", "fr": "Intervalle de rafraîchissement (s)" },
+      "label": { "en": "Reading interval (s)", "fr": "Intervalle de lecture (s)" },
       "description": {
-        "en": "How often sensors are polled, in seconds (one minute minimum).",
-        "fr": "Fréquence d'interrogation des capteurs, en secondes (une minute minimum)."
+        "en": "How often inputs and relay contacts are read, in seconds (10 to 3600).",
+        "fr": "Fréquence de lecture des entrées et des contacts de relais, en secondes (10 à 3600)."
       },
       "required": false,
-      "default": 300,
-      "min": 60,
+      "default": 30,
+      "min": 10,
       "max": 3600
+    },
+    {
+      "key": "relays",
+      "type": "section",
+      "label": {
+        "en": "Relays (iTach IP2CC, GC-100-12/18, Flex)",
+        "fr": "Relais (iTach IP2CC, GC-100-12/18, Flex)"
+      },
+      "description": {
+        "en": "A relay may drive a gate, a garage door or a blind: its \"pulse\" button stays refused until you check the option below. A pulse closes the contact for the length below, then opens it. The \"release\" button (opening the contact) does not depend on this option.",
+        "fr": "Un relais peut commander un portail, une porte de garage ou un store : son bouton « impulsion » reste refusé tant que l’option ci-dessous n’est pas cochée. Une impulsion ferme le contact pendant la durée ci-dessous, puis l’ouvre. Le bouton « relâcher » (ouvrir le contact) ne dépend pas de cette option."
+      }
+    },
+    {
+      "key": "allow_relays",
+      "type": "boolean",
+      "label": { "en": "Allow the relays", "fr": "Autoriser les relais" },
+      "description": {
+        "en": "Unchecked: pulses are refused and nothing is sent to a relay, except its release.",
+        "fr": "Décochée : les impulsions sont refusées et rien n’est envoyé à un relais, sauf son relâchement."
+      },
+      "required": false,
+      "default": false
+    },
+    {
+      "key": "pulse_ms",
+      "type": "number",
+      "label": { "en": "Pulse length (ms)", "fr": "Durée de l’impulsion (ms)" },
+      "description": {
+        "en": "How long a pulse keeps the contact closed, in milliseconds (100 to 10000).",
+        "fr": "Durée pendant laquelle une impulsion garde le contact fermé, en millisecondes (100 à 10000)."
+      },
+      "required": false,
+      "default": 500,
+      "min": 100,
+      "max": 10000
+    },
+    {
+      "key": "language",
+      "type": "select",
+      "label": { "en": "Language of the names", "fr": "Langue des noms" },
+      "description": {
+        "en": "Language of the device and feature names shown by Discovery.",
+        "fr": "Langue des noms d’appareils et de fonctions proposés par la Découverte."
+      },
+      "required": false,
+      "default": "fr",
+      "options": [
+        { "value": "fr", "label": { "en": "French", "fr": "Français" } },
+        { "value": "en", "label": { "en": "English", "fr": "Anglais" } }
+      ]
     }
   ],
   "actions": [
     {
-      "key": "test_weather",
-      "label": { "en": "Test the weather provider", "fr": "Tester le fournisseur météo" },
+      "key": "test_connection",
+      "label": { "en": "Test the gateways", "fr": "Tester les passerelles" },
       "timeout_seconds": 30
     },
     {
-      "key": "identify",
-      "label": { "en": "Identify a device", "fr": "Identifier un appareil" },
+      "key": "send_ir",
+      "label": { "en": "Try an infrared code", "fr": "Essayer un code infrarouge" },
+      "timeout_seconds": 15,
       "fields": [
         {
           "key": "device",
           "type": "select",
           "source": "devices",
-          "label": { "en": "Device", "fr": "Appareil" },
+          "label": { "en": "Gateway", "fr": "Passerelle" },
           "required": true
-        }
-      ]
-    }
-  ],
-  "scene_triggers": [
-    {
-      "key": "motion_detected",
-      "label": { "en": "Motion detected", "fr": "Mouvement détecté" },
-      "description": {
-        "en": "A demo motion sensor saw a person or an animal move.",
-        "fr": "Un détecteur de démonstration a vu bouger une personne ou un animal."
-      },
-      "fields": [
-        {
-          "key": "device",
-          "type": "select",
-          "source": "devices",
-          "label": { "en": "Sensor", "fr": "Détecteur" }
         },
         {
-          "key": "target",
-          "type": "multi_select",
-          "label": { "en": "What moved", "fr": "Ce qui a bougé" },
-          "options": [
-            { "value": "person", "label": { "en": "Person", "fr": "Personne" } },
-            { "value": "animal", "label": { "en": "Animal", "fr": "Animal" } }
-          ]
-        }
-      ],
-      "variables": [
-        {
-          "key": "target",
+          "key": "connector",
           "type": "string",
-          "label": { "en": "What moved", "fr": "Ce qui a bougé" }
+          "label": { "en": "Connector (module:port)", "fr": "Connecteur (module:port)" },
+          "placeholder": { "en": "e.g. 1:1", "fr": "ex. 1:1" },
+          "required": false
+        },
+        {
+          "key": "code",
+          "type": "string",
+          "label": { "en": "Code (sendir or Pronto)", "fr": "Code (sendir ou Pronto)" },
+          "required": true
         }
       ]
     }
   ],
   "scene_actions": [
     {
-      "key": "identify_device",
-      "label": { "en": "Identify a device", "fr": "Identifier un appareil" },
+      "key": "send_ir",
+      "label": { "en": "Send an infrared code", "fr": "Émettre un code infrarouge" },
       "description": {
-        "en": "Make a device signal itself (the demo light blinks).",
-        "fr": "Fait se signaler un appareil (la lampe de démonstration clignote)."
+        "en": "Sends an IR code (Global Caché sendir or Pronto format) from an output of a gateway.",
+        "fr": "Émet un code IR (format sendir de Global Caché ou Pronto) par une sortie d’une passerelle."
       },
       "timeout_seconds": 15,
       "fields": [
@@ -149,29 +155,30 @@
           "key": "device",
           "type": "select",
           "source": "devices",
-          "label": { "en": "Device", "fr": "Appareil" },
+          "label": { "en": "Gateway", "fr": "Passerelle" },
+          "required": true
+        },
+        {
+          "key": "connector",
+          "type": "string",
+          "label": { "en": "Connector (module:port)", "fr": "Connecteur (module:port)" },
+          "placeholder": { "en": "e.g. 1:1", "fr": "ex. 1:1" },
+          "required": false
+        },
+        {
+          "key": "code",
+          "type": "string",
+          "label": { "en": "Code (sendir or Pronto)", "fr": "Code (sendir ou Pronto)" },
           "required": true
         }
       ],
       "outputs": [
         {
-          "key": "signalled",
+          "key": "confirmed",
           "type": "boolean",
-          "label": { "en": "Device signalled", "fr": "Appareil signalé" }
+          "label": { "en": "End of transmission confirmed", "fr": "Fin d’émission confirmée" }
         }
       ]
-    }
-  ],
-  "widgets": [
-    {
-      "key": "demo_status",
-      "label": { "en": "Demo status", "fr": "État de la démo" },
-      "description": {
-        "en": "Live temperature and plug power, plug connection and observed location.",
-        "fr": "Température et puissance en direct, connexion de la prise, position observée."
-      },
-      "icon": "activity",
-      "action_timeout_seconds": 15
     }
   ]
 }

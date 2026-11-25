@@ -1,33 +1,64 @@
+// -----------------------------------------------------------------------------
+// The configuration: addresses checked, ids without dots or colons, values
+// bounded, relays off by default.
+// -----------------------------------------------------------------------------
+
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeConfig, DEFAULT_CONFIG } from '../src/config.js';
+import { DEFAULT_CONFIG, normalizeConfig, parseHost } from '../src/config.js';
 
-test('normalizeConfig returns the defaults when called with no argument', () => {
-  assert.deepEqual(normalizeConfig(), DEFAULT_CONFIG);
+test('addresses: IPv4 and names, port 4998 by default, no broadcast nor multicast', () => {
+  assert.deepEqual(parseHost('192.168.1.70'), {
+    address: '192.168.1.70',
+    port: 4998,
+    key: '192.168.1.70',
+    id: '192-168-1-70',
+  });
+  assert.equal(parseHost('192.168.1.70:4998').key, '192.168.1.70');
+  assert.equal(parseHost('iTach.LAN:5000').id, 'itach-lan-5000');
+  for (const bad of [
+    '0.0.0.0',
+    '255.255.255.255',
+    '192.168.1.255',
+    '192.168.1.0',
+    '224.0.0.1',
+    '239.255.250.250',
+    '192.168.1.70:0',
+    '192.168.1.70:70000',
+    'http://x',
+    'a b',
+    'user@host',
+    'host\r\nx',
+    '[::1]',
+    '1.2.3',
+    '',
+    undefined,
+  ]) {
+    assert.equal(parseHost(bad), undefined, String(bad));
+  }
 });
 
-test('normalizeConfig keeps user values over the defaults', () => {
-  const config = normalizeConfig({ latitude: 45.5, longitude: -73.6, unit: 'fahrenheit' });
-  assert.equal(config.latitude, 45.5);
-  assert.equal(config.longitude, -73.6);
-  assert.equal(config.unit, 'fahrenheit');
-});
-
-test('normalizeConfig coerces numeric strings coming from a form', () => {
-  const config = normalizeConfig({ latitude: '48.8', longitude: '2.3', poll_frequency: '600' });
-  assert.equal(config.latitude, 48.8);
-  assert.equal(config.longitude, 2.3);
-  assert.equal(config.poll_frequency, 600);
-  assert.equal(typeof config.poll_frequency, 'number');
-});
-
-test('normalizeConfig falls back to the default for a missing numeric field', () => {
-  const config = normalizeConfig({ unit: 'celsius' });
-  assert.equal(config.poll_frequency, DEFAULT_CONFIG.poll_frequency);
-});
-
-test('GLADYS_PREFER_LOCAL defaults to true and only an explicit false disables it', () => {
-  assert.equal(normalizeConfig().GLADYS_PREFER_LOCAL, true);
-  assert.equal(normalizeConfig({ GLADYS_PREFER_LOCAL: true }).GLADYS_PREFER_LOCAL, true);
-  assert.equal(normalizeConfig({ GLADYS_PREFER_LOCAL: false }).GLADYS_PREFER_LOCAL, false);
+test('normalized: bounded values, invalid addresses counted (never shown), ids unique', () => {
+  const config = normalizeConfig({
+    gateways: '192.168.1.70, bad host, 192.168.1.70:4998, a-b.lan, a.b-lan',
+    poll_interval: 1,
+    pulse_ms: 99_999,
+  });
+  assert.deepEqual(
+    config.hosts.map((h) => h.key),
+    ['192.168.1.70', 'a-b.lan'],
+  );
+  assert.equal(config.invalid, 2);
+  assert.equal(config.pollMs, 10_000);
+  assert.equal(config.pulseMs, 10_000);
+  assert.equal(config.allowRelays, false);
+  assert.equal(normalizeConfig({ gateways: '' }).problem, 'noHost');
+  assert.equal(normalizeConfig({ gateways: 'x y' }).problem, 'hostsInvalid');
+  assert.equal(normalizeConfig(null).problem, 'noHost');
+  const many = Array.from({ length: 9 }, (_, i) => `192.168.1.${i + 10}`).join(',');
+  assert.equal(normalizeConfig({ gateways: many }).problem, 'tooManyHosts');
+  assert.equal(normalizeConfig({ gateways: '10.0.0.5', allow_relays: 'true' }).allowRelays, true);
+  assert.equal(normalizeConfig({ gateways: '10.0.0.5', allow_relays: 'yes' }).allowRelays, false);
+  assert.equal(normalizeConfig({ gateways: '10.0.0.5', pulse_ms: '' }).pulseMs, 500);
+  assert.equal(DEFAULT_CONFIG.allow_relays, false);
 });
